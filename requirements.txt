@@ -1,0 +1,1 @@
+# 后端零依赖，仅用 Python 标准库。保留此文件供 Render 等平台识别 Python 项目。

@@ -1,0 +1,23 @@
+# Render 部署蓝图（Blueprint）
+# 用法：把本目录推到 GitHub 仓库 → Render 导入该仓库 → 选择此文件 → 部署。
+# 部署后只需在 Render 后台的 Environment 里填 AI_API_KEY（其余已预填）。
+services:
+  - type: web
+    name: ade-member-ai
+    runtime: python
+    pythonVersion: "3.12"
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "python server.py"
+    envVars:
+      - key: AI_API_KEY
+        sync: false          # 在 Render 后台手动填你的 DeepSeek key
+      - key: AI_BASE_URL
+        value: https://api.deepseek.com/v1
+      - key: AI_MODEL
+        value: deepseek-v4-flash
+      - key: DAILY_QUOTA
+        value: "30"          # 每位学员每日调用上限，按需调
+      - key: SESSION_DAYS
+        value: "7"
+      # PORT 由 Render 自动注入，无需声明
+    healthCheckPath: /
