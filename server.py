@@ -25,6 +25,10 @@ MODEL = os.environ.get("AI_MODEL", "gpt-4o-mini")
 DB = os.environ.get("DB_PATH", os.path.join(os.path.dirname(os.path.abspath(__file__)), "ai_member.db"))
 DEFAULT_QUOTA = int(os.environ.get("DAILY_QUOTA", "30"))      # 每位学员每日调用上限
 SESSION_DAYS = int(os.environ.get("SESSION_DAYS", "7"))
+ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN", "")               # 管理后台 token（阿德自己设）
+ALLOW_REGISTER = os.environ.get("ALLOW_REGISTER", "false").lower() == "true"  # 默认关闭公开注册
+ADMIN_USERNAME = os.environ.get("ADMIN_USERNAME", "")          # 启动时自动建管理员账号
+ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "")
 
 PROMPTS = {
     "diagnose": (
@@ -161,6 +165,24 @@ def init_db():
     """)
     c.commit()
     c.close()
+    # 启动时根据环境变量自动建/升级管理员账号
+    if ADMIN_USERNAME and ADMIN_PASSWORD:
+        c = db_conn()
+        row = c.execute("SELECT id,role FROM users WHERE username=?", (ADMIN_USERNAME,)).fetchone()
+        if not row:
+            h, salt = hash_pw(ADMIN_PASSWORD)
+            now = datetime.now()
+            c.execute(
+                "INSERT INTO users(username,pw_hash,pw_salt,role,created_at,daily_quota,quota_date,daily_count) "
+                "VALUES(?,?,?,'admin',?,?,?,0)",
+                (ADMIN_USERNAME, h, salt, now.isoformat(), 999, now.strftime("%Y-%m-%d")))
+            c.commit()
+            print(f"[INIT] 自动创建管理员账号：{ADMIN_USERNAME}", flush=True)
+        elif row["role"] != "admin":
+            c.execute("UPDATE users SET role='admin' WHERE id=?", (row["id"],))
+            c.commit()
+            print(f"[INIT] 升级 {ADMIN_USERNAME} 为管理员", flush=True)
+        c.close()
 
 
 def hash_pw(password, salt=None):
@@ -285,31 +307,46 @@ class Handler(BaseHTTPRequestHandler):
             self._api_me()
         elif self.path == "/api/schemes":
             self._api_list_schemes()
+        elif self.path == "/api/admin/users":
+            self._api_admin_list_users()
         elif self.path.startswith("/api/"):
             self._send_json({"error": "method not allowed"}, 405)
         else:
             self._serve_static()
 
     def do_POST(self):
-        if not self.path.startswith("/api/"):
-            self._send_json({"error": "not found"}, 404)
-            return
-        endpoint = self.path[len("/api/"):]
-        req = self._read_json()
-        if endpoint == "register":
-            return self._api_register(req)
-        if endpoint == "login":
-            return self._api_login(req)
-        if endpoint == "schemes":
-            return self._api_save_scheme(req)
+        path = self.path
+        if not path.startswith("/api/"):
+            return self._send_json({"error": "not found"}, 404)
+        if path == "/api/register":
+            return self._api_register(self._read_json())
+        if path == "/api/login":
+            return self._api_login(self._read_json())
+        if path == "/api/schemes":
+            return self._api_save_scheme(self._read_json())
+        if path == "/api/admin/users":
+            return self._api_admin_create_user(self._read_json())
+        if path.startswith("/api/admin/users/"):
+            rest = path[len("/api/admin/users/"):]
+            parts = rest.split("/")
+            if len(parts) == 2 and parts[1] == "reset":
+                return self._api_admin_reset_password(parts[0], self._read_json())
+            if len(parts) == 2 and parts[1] == "quota":
+                return self._api_admin_set_quota(parts[0], self._read_json())
+            return self._send_json({"error": "unknown admin endpoint"}, 404)
+        endpoint = path[len("/api/"):]
         if endpoint in AI_HANDLERS:
-            return self._api_ai(endpoint, req)
+            return self._api_ai(endpoint, self._read_json())
         self._send_json({"error": "unknown endpoint"}, 404)
 
     def do_DELETE(self):
-        if self.path.startswith("/api/schemes/"):
-            sid = self.path[len("/api/schemes/"):]
+        path = self.path
+        if path.startswith("/api/schemes/"):
+            sid = path[len("/api/schemes/"):]
             return self._api_del_scheme(sid)
+        if path.startswith("/api/admin/users/"):
+            uid = path[len("/api/admin/users/"):]
+            return self._api_admin_delete_user(uid)
         self._send_json({"error": "not found"}, 404)
 
     # ---------- 静态页 ----------
@@ -328,6 +365,8 @@ class Handler(BaseHTTPRequestHandler):
 
     # ---------- 账号 ----------
     def _api_register(self, req):
+        if not ALLOW_REGISTER:
+            return self._send_json({"error": "暂不开放注册，请联系阿德获取账号"}, 403)
         username = (req.get("username") or "").strip()
         password = req.get("password") or ""
         if not username or not password:
@@ -357,6 +396,7 @@ class Handler(BaseHTTPRequestHandler):
         u = c.execute("SELECT * FROM users WHERE username=?", (username,)).fetchone()
         c.close()
         if not u or not hash_pw(password, u["pw_salt"])[0] == u["pw_hash"]:
+            print(f"[LOGIN_FAIL] ip={self.client_address[0]} user='{username}' exists={u is not None}", flush=True)
             return self._send_json({"error": "用户名或密码错误"}, 401)
         code, body = issue_token(u["id"], username)
         self._send_json(body, code)
@@ -431,11 +471,119 @@ class Handler(BaseHTTPRequestHandler):
         c.close()
         self._send_json({"ok": True})
 
+    # ---------- 管理后台（需 ADMIN_TOKEN） ----------
+    def _check_admin(self):
+        if not ADMIN_TOKEN:
+            return self._send_json({"error": "管理员 token 未配置"}, 403)
+        if self.headers.get("X-Admin-Token", "") != ADMIN_TOKEN:
+            return self._send_json({"error": "管理员 token 不正确"}, 403)
+        return None
+
+    def _api_admin_list_users(self):
+        err = self._check_admin()
+        if err: return err
+        c = db_conn()
+        rows = c.execute("SELECT id,username,role,created_at,daily_quota,quota_date,daily_count FROM users ORDER BY id").fetchall()
+        c.close()
+        today = datetime.now().strftime("%Y-%m-%d")
+        users = [{
+            "id": r["id"], "username": r["username"], "role": r["role"],
+            "created_at": r["created_at"], "daily_quota": r["daily_quota"],
+            "used_today": 0 if r["quota_date"] != today else r["daily_count"],
+        } for r in rows]
+        self._send_json({"users": users, "count": len(users)})
+
+    def _api_admin_create_user(self, req):
+        err = self._check_admin()
+        if err: return err
+        username = (req.get("username") or "").strip()
+        password = req.get("password") or ""
+        try: daily_quota = int(req.get("daily_quota", DEFAULT_QUOTA))
+        except: daily_quota = DEFAULT_QUOTA
+        if not username:
+            return self._send_json({"error": "用户名必填"}, 400)
+        if len(password) < 6:
+            return self._send_json({"error": "密码至少 6 位"}, 400)
+        c = db_conn()
+        if c.execute("SELECT id FROM users WHERE username=?", (username,)).fetchone():
+            c.close()
+            return self._send_json({"error": "用户名已存在"}, 409)
+        h, salt = hash_pw(password)
+        now = datetime.now()
+        cur = c.execute(
+            "INSERT INTO users(username,pw_hash,pw_salt,role,created_at,daily_quota,quota_date,daily_count) "
+            "VALUES(?,?,?,'member',?,?,?,0)",
+            (username, h, salt, now.isoformat(), daily_quota, now.strftime("%Y-%m-%d")))
+        uid = cur.lastrowid
+        c.commit()
+        c.close()
+        self._send_json({"id": uid, "username": username, "daily_quota": daily_quota})
+
+    def _api_admin_reset_password(self, uid_str, req):
+        err = self._check_admin()
+        if err: return err
+        password = req.get("password") or ""
+        if len(password) < 6:
+            return self._send_json({"error": "新密码至少 6 位"}, 400)
+        try: uid = int(uid_str)
+        except: return self._send_json({"error": "无效 uid"}, 400)
+        c = db_conn()
+        if not c.execute("SELECT id,username FROM users WHERE id=?", (uid,)).fetchone():
+            c.close(); return self._send_json({"error": "账号不存在"}, 404)
+        h, salt = hash_pw(password)
+        c.execute("UPDATE users SET pw_hash=?, pw_salt=? WHERE id=?", (h, salt, uid))
+        # 重置后让该用户所有会话失效（强制重登）
+        c.execute("DELETE FROM sessions WHERE user_id=?", (uid,))
+        c.commit()
+        row = c.execute("SELECT username FROM users WHERE id=?", (uid,)).fetchone()
+        c.close()
+        self._send_json({"ok": True, "username": row["username"], "new_password": password})
+
+    def _api_admin_set_quota(self, uid_str, req):
+        err = self._check_admin()
+        if err: return err
+        try:
+            uid = int(uid_str)
+            q = int(req.get("daily_quota", DEFAULT_QUOTA))
+        except: return self._send_json({"error": "参数错误"}, 400)
+        if q < 1 or q > 9999:
+            return self._send_json({"error": "配额需在 1-9999"}, 400)
+        c = db_conn()
+        if not c.execute("SELECT id FROM users WHERE id=?", (uid,)).fetchone():
+            c.close(); return self._send_json({"error": "账号不存在"}, 404)
+        c.execute("UPDATE users SET daily_quota=? WHERE id=?", (q, uid))
+        c.commit()
+        c.close()
+        self._send_json({"ok": True, "daily_quota": q})
+
+    def _api_admin_delete_user(self, uid_str):
+        err = self._check_admin()
+        if err: return err
+        try: uid = int(uid_str)
+        except: return self._send_json({"error": "无效 uid"}, 400)
+        c = db_conn()
+        u = c.execute("SELECT username,role FROM users WHERE id=?", (uid,)).fetchone()
+        if not u:
+            c.close(); return self._send_json({"error": "账号不存在"}, 404)
+        if u["role"] == "admin":
+            c.close(); return self._send_json({"error": "不能删除管理员"}, 403)
+        c.execute("DELETE FROM users WHERE id=?", (uid,))
+        c.execute("DELETE FROM sessions WHERE user_id=?", (uid,))
+        c.execute("DELETE FROM schemes WHERE user_id=?", (uid,))
+        c.commit()
+        c.close()
+        self._send_json({"ok": True, "deleted": u["username"]})
+
     def log_message(self, *args):
         pass
 
 
 if __name__ == "__main__":
     init_db()
-    print(f"学员 AI 系统运行中：http://localhost:{PORT}  (AI_API_KEY={'已配置' if API_KEY else '未配置→示例数据'}; 账号系统=开)")
+    flag = "已配置" if API_KEY else "未配置→示例数据"
+    reg = "开" if ALLOW_REGISTER else "关（仅管理员可创建）"
+    admin_init = ADMIN_USERNAME if (ADMIN_USERNAME and ADMIN_PASSWORD) else "未配置"
+    print(f"学员 AI 系统运行中：http://0.0.0.0:{PORT}", flush=True)
+    print(f"  AI_KEY={flag} | 公开注册={reg} | 管理员账号={admin_init}", flush=True)
+    print(f"  管理面板入口：网站 URL 后加 ?admin={'<ADMIN_TOKEN>' if ADMIN_TOKEN else '未配置'}", flush=True)
     HTTPServer(("0.0.0.0", PORT), Handler).serve_forever()

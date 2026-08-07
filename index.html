@@ -59,6 +59,14 @@
   .tabs button{margin:0;flex:1;background:#fff;color:var(--ink);border:1px solid var(--line)}
   .tabs button.active{background:var(--brand);color:#fff;border-color:var(--brand)}
   .err{color:#d93025;font-size:13px;min-height:18px;margin-top:6px}
+  .admin-entry{font-size:12px;color:#888;text-decoration:none;padding:4px 6px;border-radius:6px}
+  .admin-entry:hover{background:#f1f3f8;color:#333}
+  .admin-list{max-height:380px;overflow:auto;display:flex;flex-direction:column;gap:6px;margin-top:6px}
+  .admin-row{background:#fbfcfe;border:1px dashed var(--line);border-radius:8px;padding:10px}
+  .admin-row-main{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap}
+  .admin-row-actions{display:flex;gap:4px;flex-wrap:wrap}
+  .admin-row-actions button{padding:4px 8px;font-size:12px}
+  .admin-box{max-width:620px}
 </style>
 </head>
 <body>
@@ -73,6 +81,7 @@
       <span id="authArea"></span>
       <button class="ghost" onclick="openSettings()">⚙ 设置</button>
       <button class="ghost" onclick="gotoPlans()">📁 我的方案</button>
+      <a href="#" id="adminLink" class="admin-entry" onclick="openAdmin(event)" title="管理员后台" style="display:none">🔑 管理</a>
     </div>
   </header>
 
@@ -151,18 +160,42 @@
 <!-- 登录 / 注册 -->
 <div id="auth" class="modal hidden">
   <div class="modal-box">
-    <h3>登录 / 注册</h3>
-    <div class="tabs">
-      <button id="tabLogin" class="active" onclick="switchTab('login')">登录</button>
-      <button id="tabReg" onclick="switchTab('reg')">注册</button>
-    </div>
+    <h3>学员登录</h3>
+    <p class="mini" style="margin:6px 0 12px">账号由阿德统一开通，自助注册已关闭。如未拿到账号，请联系阿德。</p>
     <label>用户名</label><input id="au_user" placeholder="登录账号" autocomplete="username" />
-    <label>密码（注册至少 6 位）</label><input id="au_pwd" type="password" placeholder="密码" autocomplete="current-password" />
+    <label>密码</label><input id="au_pwd" type="password" placeholder="密码" autocomplete="current-password" />
     <div class="err" id="au_err"></div>
     <div style="margin-top:8px">
-      <button onclick="authSubmit()">确认</button>
+      <button onclick="authSubmit()">登录</button>
       <button class="ghost" onclick="closeAuth()">关闭</button>
     </div>
+  </div>
+</div>
+
+<!-- 管理员后台 -->
+<div id="admin" class="modal hidden">
+  <div class="modal-box admin-box">
+    <h3>管理员后台 <span class="mini">（仅阿德可见）</span></h3>
+    <p class="mini" style="margin:6px 0 10px">在这里给学员创建账号、重置密码、调整配额。Token 仅保存在你浏览器本地。</p>
+    <label>管理员 Token</label>
+    <div style="display:flex;gap:6px"><input id="ad_token" type="password" placeholder="填写后点下面按钮解锁" style="flex:1" />
+      <button class="ghost" onclick="adminUnlock()">解锁</button></div>
+    <div id="ad_panel" style="display:none;margin-top:14px">
+      <label>创建学员账号</label>
+      <div class="row" style="gap:6px">
+        <input id="ad_new_user" placeholder="用户名（如 student01）" style="flex:1" />
+        <input id="ad_new_pwd" placeholder="初始密码（≥6 位）" style="flex:1" />
+        <input id="ad_new_quota" type="number" placeholder="每日配额（默认 30）" value="30" style="width:120px" />
+      </div>
+      <div style="margin-top:6px"><button onclick="adminCreate()">创建</button></div>
+      <div class="err" id="ad_create_err"></div>
+      <hr style="margin:14px 0;border:none;border-top:1px dashed var(--line)">
+      <label>学员列表</label>
+      <div id="ad_list" class="admin-list"></div>
+      <hr style="margin:14px 0;border:none;border-top:1px dashed var(--line)">
+      <p class="mini">提示：复制账号和初始密码发给学员，让他们登录 https://ade-member-ai.onrender.com 即可。学员如果忘了密码，在这里直接重置就行。</p>
+    </div>
+    <div style="margin-top:12px"><button class="ghost" onclick="closeAdmin()">关闭</button></div>
   </div>
 </div>
 
@@ -222,27 +255,109 @@ const apiBase = () => (loadCfg().backendBase || "");
 const token = () => localStorage.getItem("ai_token") || "";
 
 /* ---------- 账号 ---------- */
-let authTab = "login";
-function switchTab(t){ authTab=t; $("tabLogin").classList.toggle("active", t==="login"); $("tabReg").classList.toggle("active", t==="reg"); $("au_err").textContent=""; }
-function openAuth(){ $("au_err").textContent=""; $("auth").classList.remove("hidden"); }
+function openAuth(){ $("au_err").textContent=""; $("auth").classList.remove("hidden"); setTimeout(()=>$("au_user").focus(), 50); }
 function closeAuth(){ $("auth").classList.add("hidden"); }
 async function authSubmit(){
   const username=$("au_user").value.trim(), password=$("au_pwd").value;
   if(!username||!password){ $("au_err").textContent="请输入用户名和密码"; return; }
-  const ep = authTab==="login" ? "login" : "register";
-  const r = await fetch(apiBase()+"/api/"+ep, {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({username,password})});
+  const r = await fetch(apiBase()+"/api/login", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({username,password})});
   const d = await r.json().catch(()=>({}));
   if(r.ok){ localStorage.setItem("ai_token", d.token); afterLogin(d.user); }
-  else { $("au_err").textContent=d.error||"操作失败"; }
+  else { $("au_err").textContent=d.error||"登录失败，请联系阿德"; }
 }
 function afterLogin(user){ closeAuth(); updateAuthUI(user); refreshMe(); loadPlans(); }
 function logout(){ localStorage.removeItem("ai_token"); updateAuthUI(null); $("plans").innerHTML='<p class="mini">登录后可查看并保存你的方案。</p>'; }
 function updateAuthUI(user){
   const a=$("authArea");
   if(user){ a.innerHTML=`<span class="mini">👤 ${esc(user.username)}</span> <span id="quotaTag" class="tag"></span> <button class="ghost" onclick="logout()">退出</button>`; }
-  else { a.innerHTML=`<button onclick="openAuth()">登录 / 注册</button>`; }
+  else { a.innerHTML=`<button onclick="openAuth()">学员登录</button>`; }
   a.style.display="block";
 }
+
+/* ---------- 管理员后台 ---------- */
+function adminToken(){ return localStorage.getItem("ai_admin_token") || ""; }
+function adminHeaders(){ const t=adminToken(); return t ? {"X-Admin-Token": t} : {}; }
+function openAdmin(e){
+  if(e) e.preventDefault();
+  $("ad_token").value = adminToken();
+  $("ad_panel").style.display = adminToken() ? "block" : "none";
+  $("ad_create_err").textContent = "";
+  $("admin").classList.remove("hidden");
+  if(adminToken()) adminList();
+}
+function closeAdmin(){ $("admin").classList.add("hidden"); }
+function adminUnlock(){
+  const t = $("ad_token").value.trim();
+  if(!t){ $("ad_create_err").textContent = "请填入管理员 Token"; return; }
+  localStorage.setItem("ai_admin_token", t);
+  $("ad_panel").style.display = "block";
+  adminList();
+}
+async function adminList(){
+  const r = await fetch(apiBase()+"/api/admin/users", {headers: adminHeaders()});
+  if(!r.ok){ $("ad_create_err").textContent="Token 无效或服务器未配置管理员"; $("ad_panel").style.display="none"; return; }
+  const d = await r.json();
+  const rows = d.users.map(u => `
+    <div class="admin-row" data-uid="${u.id}" data-name="${esc(u.username)}">
+      <div class="admin-row-main">
+        <div><b>${esc(u.username)}</b> ${u.role==='admin'?'<span class="tag">管理员</span>':''}
+          <span class="mini">id=${u.id} · 创建 ${esc((u.created_at||'').slice(0,16))} · 今日已用 ${u.used_today}/${u.daily_quota}</span>
+        </div>
+        <div class="admin-row-actions">
+          <button class="ghost" onclick="adminReset(${u.id},'${esc(u.username)}')">重置密码</button>
+          <button class="ghost" onclick="adminSetQuota(${u.id},'${esc(u.username)}')">改配额</button>
+          ${u.role!=='admin'?`<button class="ghost" onclick="adminDelete(${u.id},'${esc(u.username)}')">删除</button>`:''}
+        </div>
+      </div>
+    </div>`).join("");
+  $("ad_list").innerHTML = rows || '<p class="mini">还没有学员账号</p>';
+}
+async function adminCreate(){
+  $("ad_create_err").textContent="";
+  const username = $("ad_new_user").value.trim();
+  const password = $("ad_new_pwd").value;
+  const daily_quota = parseInt($("ad_new_quota").value||"30", 10);
+  if(!username || !password){ $("ad_create_err").textContent="用户名和密码必填"; return; }
+  const r = await fetch(apiBase()+"/api/admin/users", {method:"POST", headers:{"Content-Type":"application/json", ...adminHeaders()}, body:JSON.stringify({username,password,daily_quota})});
+  const d = await r.json().catch(()=>({}));
+  if(r.ok){ $("ad_new_user").value=""; $("ad_new_pwd").value=""; adminList(); }
+  else { $("ad_create_err").textContent=d.error||"创建失败"; }
+}
+async function adminReset(uid, name){
+  const newpwd = prompt(`为「${name}」设置新密码（≥6 位）：`);
+  if(!newpwd || newpwd.length<6) return;
+  const r = await fetch(apiBase()+"/api/admin/users/"+uid+"/reset", {method:"POST", headers:{"Content-Type":"application/json", ...adminHeaders()}, body:JSON.stringify({password:newpwd})});
+  const d = await r.json().catch(()=>({}));
+  alert(d.ok ? `已重置「${name}」的密码为：${d.new_password}\n（学员所有会话已失效，需要重新登录）` : (d.error||"重置失败"));
+  if(d.ok) adminList();
+}
+async function adminSetQuota(uid, name){
+  const q = prompt(`为「${name}」设置新的每日配额（1-9999）：`);
+  if(!q) return;
+  const r = await fetch(apiBase()+"/api/admin/users/"+uid+"/quota", {method:"POST", headers:{"Content-Type":"application/json", ...adminHeaders()}, body:JSON.stringify({daily_quota: parseInt(q,10)})});
+  const d = await r.json().catch(()=>({}));
+  alert(d.ok ? `已将「${name}」配额改为 ${d.daily_quota}/天` : (d.error||"修改失败"));
+  if(d.ok) adminList();
+}
+async function adminDelete(uid, name){
+  if(!confirm(`确定删除「${name}」及其所有方案？此操作不可恢复`)) return;
+  const r = await fetch(apiBase()+"/api/admin/users/"+uid, {method:"DELETE", headers: adminHeaders()});
+  const d = await r.json().catch(()=>({}));
+  alert(d.ok ? `已删除「${d.deleted}」` : (d.error||"删除失败"));
+  if(d.ok) adminList();
+}
+// 入口：URL 带 ?admin=TOKEN 时自动填入并显示入口图标（不自动解锁，需阿德主动点）
+(function(){
+  const p = new URLSearchParams(location.search);
+  const t = p.get("admin");
+  if(t){
+    localStorage.setItem("ai_admin_token", t);
+    document.getElementById("adminLink").style.display = "inline-block";
+    history.replaceState(null, "", location.pathname); // 清掉 URL 里的 token 防泄露
+  } else if(adminToken()){
+    document.getElementById("adminLink").style.display = "inline-block";
+  }
+})();
 async function refreshMe(){
   if(!token()){ updateAuthUI(null); return; }
   const r = await fetch(apiBase()+"/api/me", {headers:{"Authorization":"Bearer "+token()}});
