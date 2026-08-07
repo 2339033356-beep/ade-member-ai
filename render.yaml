@@ -1,6 +1,7 @@
 # Render 部署蓝图（Blueprint）
 # 用法：把本目录推到 GitHub 仓库 → Render 导入该仓库 → 选择此文件 → 部署。
-# 部署后只需在 Render 后台的 Environment 里填 AI_API_KEY（其余已预填）。
+# 部署后在 Render 后台的 Environment 里填：AI_API_KEY、ADMIN_TOKEN、ADMIN_USERNAME、
+# ADMIN_PASSWORD、DATABASE_URL（均为 sync:false，值在后台手动填，不会随仓库覆盖）。
 services:
   - type: web
     name: ade-member-ai
@@ -19,5 +20,12 @@ services:
         value: "30"          # 每位学员每日调用上限，按需调
       - key: SESSION_DAYS
         value: "7"
-      # PORT 由 Render 自动注入，无需声明
+      - key: ADMIN_TOKEN
+        sync: false          # 后台填：管理员面板 token（自定义复杂串）
+      - key: ADMIN_USERNAME
+        sync: false          # 后台填：管理员账号
+      - key: ADMIN_PASSWORD
+        sync: false          # 后台填：管理员密码（≥6位）
+      - key: DATABASE_URL
+        sync: false          # 后台填：Postgres 连接串（建好 Postgres 实例后粘贴）
     healthCheckPath: /

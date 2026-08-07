@@ -1,17 +1,18 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-学员 AI 系统网站 - 后端（零依赖，标准库实现）
+学员 AI 系统网站 - 后端（零依赖，标准库实现；可选 Postgres 持久化）
 - 服务静态 index.html
 - /api/register、/api/login：账号注册登录，签发会话 token
 - /api/diagnose /position /content /templates /monetize：五大 AI 接口（Bearer 鉴权 + 每日配额限流）
-- /api/schemes：学员方案存档（服务端 SQLite，按用户隔离）
+- /api/schemes：学员方案存档（按用户隔离）
+- ai_member.db（SQLite）/ DATABASE_URL（Postgres）二选一：
+    设了 DATABASE_URL 就走 Postgres（数据持久化，重部署不丢）；没设就退回本地 SQLite。
 - AI_API_KEY / AI_BASE_URL / AI_MODEL 仅在后端；未配置时返回内置示例(mock)
 安全：API Key 绝不出现在任何响应里；密码用 pbkdf2 加盐哈希；会话 token 随机。
 """
 import json
 import os
-import sqlite3
 import hashlib
 import secrets
 import urllib.request
@@ -22,13 +23,41 @@ PORT = int(os.environ.get("PORT", "8000"))
 API_KEY = os.environ.get("AI_API_KEY", "")
 BASE_URL = os.environ.get("AI_BASE_URL", "https://api.openai.com/v1").rstrip("/")
 MODEL = os.environ.get("AI_MODEL", "gpt-4o-mini")
-DB = os.environ.get("DB_PATH", os.path.join(os.path.dirname(os.path.abspath(__file__)), "ai_member.db"))
 DEFAULT_QUOTA = int(os.environ.get("DAILY_QUOTA", "30"))      # 每位学员每日调用上限
 SESSION_DAYS = int(os.environ.get("SESSION_DAYS", "7"))
 ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN", "")               # 管理后台 token（阿德自己设）
 ALLOW_REGISTER = os.environ.get("ALLOW_REGISTER", "false").lower() == "true"  # 默认关闭公开注册
 ADMIN_USERNAME = os.environ.get("ADMIN_USERNAME", "")          # 启动时自动建管理员账号
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "")
+
+# ---------- 数据库：Postgres / SQLite 双模式 ----------
+DATABASE_URL = os.environ.get("DATABASE_URL", "")
+USE_PG = bool(DATABASE_URL)
+
+if USE_PG:
+    import psycopg
+    def db_conn():
+        # dict_row 让查询结果支持 row["field"] 取值，与 SQLite 行为一致
+        return psycopg.connect(DATABASE_URL, row_factory=psycopg.rows.dict_row, connect_timeout=20)
+else:
+    import sqlite3
+    DB = os.environ.get("DB_PATH", os.path.join(os.path.dirname(os.path.abspath(__file__)), "ai_member.db"))
+    def db_conn():
+        conn = sqlite3.connect(DB)
+        conn.row_factory = sqlite3.Row
+        return conn
+
+def q(sql):
+    """把 SQLite 的 ? 占位符换成 Postgres 的 %s；SQLite 模式原样返回。"""
+    return sql.replace("?", "%s") if USE_PG else sql
+
+def insert_id(conn, sql, params):
+    """插入并返回自增主键 id（两种数据库兼容）。"""
+    if USE_PG:
+        cur = conn.execute(q(sql) + " RETURNING id", params)
+        return cur.fetchone()["id"]
+    cur = conn.execute(sql, params)
+    return cur.lastrowid
 
 PROMPTS = {
     "diagnose": (
@@ -126,60 +155,90 @@ AI_HANDLERS = {
     "monetize": lambda r: f"账号阶段：{r.get('stage','')}\n赛道：{r.get('track','')}",
 }
 
+# 建表语句：两种数据库各自的写法
+SQLITE_DDL = """
+CREATE TABLE IF NOT EXISTS users(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  username TEXT UNIQUE NOT NULL,
+  pw_hash TEXT NOT NULL,
+  pw_salt TEXT NOT NULL,
+  role TEXT NOT NULL DEFAULT 'member',
+  created_at TEXT NOT NULL,
+  daily_quota INTEGER NOT NULL DEFAULT 30,
+  quota_date TEXT,
+  daily_count INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS sessions(
+  token TEXT PRIMARY KEY,
+  user_id INTEGER NOT NULL,
+  created_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS schemes(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  kind TEXT NOT NULL,
+  title TEXT,
+  content TEXT,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_schemes_user ON schemes(user_id);
+"""
 
-def db_conn():
-    conn = sqlite3.connect(DB)
-    conn.row_factory = sqlite3.Row
-    return conn
+PG_DDL = """
+CREATE TABLE IF NOT EXISTS users(
+  id SERIAL PRIMARY KEY,
+  username TEXT UNIQUE NOT NULL,
+  pw_hash TEXT NOT NULL,
+  pw_salt TEXT NOT NULL,
+  role TEXT NOT NULL DEFAULT 'member',
+  created_at TEXT NOT NULL,
+  daily_quota INTEGER NOT NULL DEFAULT 30,
+  quota_date TEXT,
+  daily_count INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS sessions(
+  token TEXT PRIMARY KEY,
+  user_id INTEGER NOT NULL,
+  created_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS schemes(
+  id SERIAL PRIMARY KEY,
+  user_id INTEGER NOT NULL,
+  kind TEXT NOT NULL,
+  title TEXT,
+  content TEXT,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_schemes_user ON schemes(user_id);
+"""
 
 
 def init_db():
     c = db_conn()
-    c.executescript("""
-    CREATE TABLE IF NOT EXISTS users(
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      username TEXT UNIQUE NOT NULL,
-      pw_hash TEXT NOT NULL,
-      pw_salt TEXT NOT NULL,
-      role TEXT NOT NULL DEFAULT 'member',
-      created_at TEXT NOT NULL,
-      daily_quota INTEGER NOT NULL DEFAULT 30,
-      quota_date TEXT,
-      daily_count INTEGER NOT NULL DEFAULT 0
-    );
-    CREATE TABLE IF NOT EXISTS sessions(
-      token TEXT PRIMARY KEY,
-      user_id INTEGER NOT NULL,
-      created_at TEXT NOT NULL,
-      expires_at TEXT NOT NULL
-    );
-    CREATE TABLE IF NOT EXISTS schemes(
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      user_id INTEGER NOT NULL,
-      kind TEXT NOT NULL,
-      title TEXT,
-      content TEXT,
-      created_at TEXT NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS idx_schemes_user ON schemes(user_id);
-    """)
+    ddl = PG_DDL if USE_PG else SQLITE_DDL
+    for stmt in ddl.split(";"):
+        s = stmt.strip()
+        if s:
+            c.execute(s)
     c.commit()
     c.close()
     # 启动时根据环境变量自动建/升级管理员账号
     if ADMIN_USERNAME and ADMIN_PASSWORD:
         c = db_conn()
-        row = c.execute("SELECT id,role FROM users WHERE username=?", (ADMIN_USERNAME,)).fetchone()
+        row = c.execute(q("SELECT id,role FROM users WHERE username=?"), (ADMIN_USERNAME,)).fetchone()
         if not row:
             h, salt = hash_pw(ADMIN_PASSWORD)
             now = datetime.now()
             c.execute(
-                "INSERT INTO users(username,pw_hash,pw_salt,role,created_at,daily_quota,quota_date,daily_count) "
-                "VALUES(?,?,?,'admin',?,?,?,0)",
+                q("INSERT INTO users(username,pw_hash,pw_salt,role,created_at,daily_quota,quota_date,daily_count) "
+                  "VALUES(?,?,?,'admin',?,?,?,0)"),
                 (ADMIN_USERNAME, h, salt, now.isoformat(), 999, now.strftime("%Y-%m-%d")))
             c.commit()
             print(f"[INIT] 自动创建管理员账号：{ADMIN_USERNAME}", flush=True)
         elif row["role"] != "admin":
-            c.execute("UPDATE users SET role='admin' WHERE id=?", (row["id"],))
+            c.execute(q("UPDATE users SET role='admin' WHERE id=?"), (row["id"],))
             c.commit()
             print(f"[INIT] 升级 {ADMIN_USERNAME} 为管理员", flush=True)
         c.close()
@@ -200,16 +259,16 @@ def auth_user(handler):
     if not token:
         return None
     c = db_conn()
-    row = c.execute("SELECT * FROM sessions WHERE token=?", (token,)).fetchone()
+    row = c.execute(q("SELECT * FROM sessions WHERE token=?"), (token,)).fetchone()
     if not row:
         c.close()
         return None
     if datetime.fromisoformat(row["expires_at"]) < datetime.now():
-        c.execute("DELETE FROM sessions WHERE token=?", (token,))
+        c.execute(q("DELETE FROM sessions WHERE token=?"), (token,))
         c.commit()
         c.close()
         return None
-    u = c.execute("SELECT * FROM users WHERE id=?", (row["user_id"],)).fetchone()
+    u = c.execute(q("SELECT * FROM users WHERE id=?"), (row["user_id"],)).fetchone()
     c.close()
     return dict(u) if u else None
 
@@ -219,7 +278,7 @@ def issue_token(uid, username):
     now = datetime.now()
     exp = now + timedelta(days=SESSION_DAYS)
     c = db_conn()
-    c.execute("INSERT INTO sessions(token,user_id,created_at,expires_at) VALUES(?,?,?,?)",
+    c.execute(q("INSERT INTO sessions(token,user_id,created_at,expires_at) VALUES(?,?,?,?)"),
               (token, uid, now.isoformat(), exp.isoformat()))
     c.commit()
     c.close()
@@ -230,16 +289,16 @@ def check_and_inc_quota(user_id):
     """校验并扣减当日配额。返回 (allow, user_dict_after)。"""
     today = datetime.now().strftime("%Y-%m-%d")
     c = db_conn()
-    u = c.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
+    u = c.execute(q("SELECT * FROM users WHERE id=?"), (user_id,)).fetchone()
     d = dict(u)
     if d["quota_date"] != today:
-        c.execute("UPDATE users SET quota_date=?, daily_count=0 WHERE id=?", (today, user_id))
+        c.execute(q("UPDATE users SET quota_date=?, daily_count=0 WHERE id=?"), (today, user_id))
         d["quota_date"] = today
         d["daily_count"] = 0
     if d["daily_count"] >= d["daily_quota"]:
         c.close()
         return False, d
-    c.execute("UPDATE users SET daily_count=daily_count+1 WHERE id=?", (user_id,))
+    c.execute(q("UPDATE users SET daily_count=daily_count+1 WHERE id=?"), (user_id,))
     c.commit()
     c.close()
     d["daily_count"] += 1
@@ -303,7 +362,9 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self):
-        if self.path == "/api/me":
+        if self.path == "/api/health":
+            self._api_health()
+        elif self.path == "/api/me":
             self._api_me()
         elif self.path == "/api/schemes":
             self._api_list_schemes()
@@ -374,16 +435,15 @@ class Handler(BaseHTTPRequestHandler):
         if len(password) < 6:
             return self._send_json({"error": "密码至少 6 位"}, 400)
         c = db_conn()
-        if c.execute("SELECT id FROM users WHERE username=?", (username,)).fetchone():
+        if c.execute(q("SELECT id FROM users WHERE username=?"), (username,)).fetchone():
             c.close()
             return self._send_json({"error": "用户名已存在"}, 409)
         h, salt = hash_pw(password)
         now = datetime.now()
-        cur = c.execute(
+        uid = insert_id(c,
             "INSERT INTO users(username,pw_hash,pw_salt,role,created_at,daily_quota,quota_date,daily_count) "
             "VALUES(?,?,?,'member',?,?,?,0)",
             (username, h, salt, now.isoformat(), DEFAULT_QUOTA, now.strftime("%Y-%m-%d")))
-        uid = cur.lastrowid
         c.commit()
         c.close()
         code, body = issue_token(uid, username)
@@ -393,13 +453,37 @@ class Handler(BaseHTTPRequestHandler):
         username = (req.get("username") or "").strip()
         password = req.get("password") or ""
         c = db_conn()
-        u = c.execute("SELECT * FROM users WHERE username=?", (username,)).fetchone()
+        u = c.execute(q("SELECT * FROM users WHERE username=?"), (username,)).fetchone()
         c.close()
         if not u or not hash_pw(password, u["pw_salt"])[0] == u["pw_hash"]:
             print(f"[LOGIN_FAIL] ip={self.client_address[0]} user='{username}' exists={u is not None}", flush=True)
             return self._send_json({"error": "用户名或密码错误"}, 401)
         code, body = issue_token(u["id"], username)
         self._send_json(body, code)
+
+    def _api_health(self):
+        """自检端点：浏览器直接打开 /api/health 就能看到配置是否生效（不泄露任何密钥）"""
+        info = {
+            "ok": True,
+            "版本": "v5.1",
+            "数据库模式": "Postgres（持久化·重部署不丢账号）" if USE_PG else "SQLite（临时·重部署会丢账号）",
+            "持久化": USE_PG,
+            "AI已配置": bool(API_KEY),
+            "AI模型": MODEL if API_KEY else "未配置（走演示模式）",
+            "管理员后台已启用": bool(ADMIN_TOKEN),
+            "开放注册": ALLOW_REGISTER,
+        }
+        try:
+            c = db_conn()
+            cur = c.execute("SELECT COUNT(*) AS n FROM users")
+            row = cur.fetchone()
+            info["账号总数"] = row["n"] if row else 0
+            c.close()
+            info["数据库连接"] = "正常"
+        except Exception as e:
+            info["ok"] = False
+            info["数据库连接"] = "失败：%s" % str(e)[:200]
+        self._send_json(info)
 
     def _api_me(self, user=None):
         user = user or auth_user(self)
@@ -437,7 +521,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._send_json({"error": "未登录"}, 401)
         c = db_conn()
         rows = c.execute(
-            "SELECT id,kind,title,content,created_at FROM schemes WHERE user_id=? ORDER BY id DESC",
+            q("SELECT id,kind,title,content,created_at FROM schemes WHERE user_id=? ORDER BY id DESC"),
             (user["id"],)).fetchall()
         c.close()
         items = [dict(r) for r in rows]
@@ -453,10 +537,9 @@ class Handler(BaseHTTPRequestHandler):
         if not kind or not text:
             return self._send_json({"error": "缺少内容"}, 400)
         c = db_conn()
-        cur = c.execute(
+        sid = insert_id(c,
             "INSERT INTO schemes(user_id,kind,title,content,created_at) VALUES(?,?,?,?,?)",
             (user["id"], kind, title, text, datetime.now().isoformat()))
-        sid = cur.lastrowid
         c.commit()
         c.close()
         self._send_json({"ok": True, "id": sid})
@@ -466,7 +549,7 @@ class Handler(BaseHTTPRequestHandler):
         if not user:
             return self._send_json({"error": "未登录"}, 401)
         c = db_conn()
-        c.execute("DELETE FROM schemes WHERE id=? AND user_id=?", (sid, user["id"]))
+        c.execute(q("DELETE FROM schemes WHERE id=? AND user_id=?"), (sid, user["id"]))
         c.commit()
         c.close()
         self._send_json({"ok": True})
@@ -505,16 +588,15 @@ class Handler(BaseHTTPRequestHandler):
         if len(password) < 6:
             return self._send_json({"error": "密码至少 6 位"}, 400)
         c = db_conn()
-        if c.execute("SELECT id FROM users WHERE username=?", (username,)).fetchone():
+        if c.execute(q("SELECT id FROM users WHERE username=?"), (username,)).fetchone():
             c.close()
             return self._send_json({"error": "用户名已存在"}, 409)
         h, salt = hash_pw(password)
         now = datetime.now()
-        cur = c.execute(
+        uid = insert_id(c,
             "INSERT INTO users(username,pw_hash,pw_salt,role,created_at,daily_quota,quota_date,daily_count) "
             "VALUES(?,?,?,'member',?,?,?,0)",
             (username, h, salt, now.isoformat(), daily_quota, now.strftime("%Y-%m-%d")))
-        uid = cur.lastrowid
         c.commit()
         c.close()
         self._send_json({"id": uid, "username": username, "daily_quota": daily_quota})
@@ -528,14 +610,14 @@ class Handler(BaseHTTPRequestHandler):
         try: uid = int(uid_str)
         except: return self._send_json({"error": "无效 uid"}, 400)
         c = db_conn()
-        if not c.execute("SELECT id,username FROM users WHERE id=?", (uid,)).fetchone():
+        if not c.execute(q("SELECT id,username FROM users WHERE id=?"), (uid,)).fetchone():
             c.close(); return self._send_json({"error": "账号不存在"}, 404)
         h, salt = hash_pw(password)
-        c.execute("UPDATE users SET pw_hash=?, pw_salt=? WHERE id=?", (h, salt, uid))
+        c.execute(q("UPDATE users SET pw_hash=?, pw_salt=? WHERE id=?"), (h, salt, uid))
         # 重置后让该用户所有会话失效（强制重登）
-        c.execute("DELETE FROM sessions WHERE user_id=?", (uid,))
+        c.execute(q("DELETE FROM sessions WHERE user_id=?"), (uid,))
         c.commit()
-        row = c.execute("SELECT username FROM users WHERE id=?", (uid,)).fetchone()
+        row = c.execute(q("SELECT username FROM users WHERE id=?"), (uid,)).fetchone()
         c.close()
         self._send_json({"ok": True, "username": row["username"], "new_password": password})
 
@@ -544,17 +626,17 @@ class Handler(BaseHTTPRequestHandler):
         if err: return err
         try:
             uid = int(uid_str)
-            q = int(req.get("daily_quota", DEFAULT_QUOTA))
+            qn = int(req.get("daily_quota", DEFAULT_QUOTA))
         except: return self._send_json({"error": "参数错误"}, 400)
-        if q < 1 or q > 9999:
+        if qn < 1 or qn > 9999:
             return self._send_json({"error": "配额需在 1-9999"}, 400)
         c = db_conn()
-        if not c.execute("SELECT id FROM users WHERE id=?", (uid,)).fetchone():
+        if not c.execute(q("SELECT id FROM users WHERE id=?"), (uid,)).fetchone():
             c.close(); return self._send_json({"error": "账号不存在"}, 404)
-        c.execute("UPDATE users SET daily_quota=? WHERE id=?", (q, uid))
+        c.execute(q("UPDATE users SET daily_quota=? WHERE id=?"), (qn, uid))
         c.commit()
         c.close()
-        self._send_json({"ok": True, "daily_quota": q})
+        self._send_json({"ok": True, "daily_quota": qn})
 
     def _api_admin_delete_user(self, uid_str):
         err = self._check_admin()
@@ -562,14 +644,14 @@ class Handler(BaseHTTPRequestHandler):
         try: uid = int(uid_str)
         except: return self._send_json({"error": "无效 uid"}, 400)
         c = db_conn()
-        u = c.execute("SELECT username,role FROM users WHERE id=?", (uid,)).fetchone()
+        u = c.execute(q("SELECT username,role FROM users WHERE id=?"), (uid,)).fetchone()
         if not u:
             c.close(); return self._send_json({"error": "账号不存在"}, 404)
         if u["role"] == "admin":
             c.close(); return self._send_json({"error": "不能删除管理员"}, 403)
-        c.execute("DELETE FROM users WHERE id=?", (uid,))
-        c.execute("DELETE FROM sessions WHERE user_id=?", (uid,))
-        c.execute("DELETE FROM schemes WHERE user_id=?", (uid,))
+        c.execute(q("DELETE FROM users WHERE id=?"), (uid,))
+        c.execute(q("DELETE FROM sessions WHERE user_id=?"), (uid,))
+        c.execute(q("DELETE FROM schemes WHERE user_id=?"), (uid,))
         c.commit()
         c.close()
         self._send_json({"ok": True, "deleted": u["username"]})
@@ -583,7 +665,8 @@ if __name__ == "__main__":
     flag = "已配置" if API_KEY else "未配置→示例数据"
     reg = "开" if ALLOW_REGISTER else "关（仅管理员可创建）"
     admin_init = ADMIN_USERNAME if (ADMIN_USERNAME and ADMIN_PASSWORD) else "未配置"
+    db_mode = "Postgres(持久化)" if USE_PG else "SQLite(本地)"
     print(f"学员 AI 系统运行中：http://0.0.0.0:{PORT}", flush=True)
-    print(f"  AI_KEY={flag} | 公开注册={reg} | 管理员账号={admin_init}", flush=True)
+    print(f"  数据库={db_mode} | AI_KEY={flag} | 公开注册={reg} | 管理员账号={admin_init}", flush=True)
     print(f"  管理面板入口：网站 URL 后加 ?admin={'<ADMIN_TOKEN>' if ADMIN_TOKEN else '未配置'}", flush=True)
     HTTPServer(("0.0.0.0", PORT), Handler).serve_forever()
