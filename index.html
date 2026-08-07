@@ -36,8 +36,14 @@
   button:disabled{opacity:.6;cursor:not-allowed}
   button.ghost{background:#fff;color:var(--brand);border:1px solid var(--brand);margin-right:6px}
   .result{margin-top:14px;background:#fbfcfe;border:1px dashed var(--line);
-    border-radius:10px;padding:14px;font-size:14px;white-space:pre-wrap;display:none}
+    border-radius:10px;padding:16px 18px;font-size:14px;line-height:1.8;display:none}
   .result.show{display:block}
+  .md-h{font-size:15px;font-weight:700;margin:16px 0 6px;color:#1f2329}
+  .md-h:first-child{margin-top:0}
+  .md-p{margin:8px 0;line-height:1.85}
+  .md-ul,.md-ol{margin:8px 0;padding-left:22px}
+  .md-ul li,.md-ol li{margin:6px 0;line-height:1.85}
+  .result-title{font-size:15px;font-weight:700;margin:0 0 12px;color:var(--brand)}
   .tag{display:inline-block;background:var(--brand-soft);color:var(--brand);
     border-radius:6px;padding:2px 8px;font-size:12px;margin:2px 4px 2px 0}
   .track{margin:10px 0;padding:12px;border:1px solid var(--line);border-radius:10px}
@@ -75,12 +81,12 @@
     <h2><span class="num">1</span> 赛道诊断</h2>
     <p class="hint">填你的真实情况，AI 推荐适合起步的赛道。</p>
     <div class="row">
-      <div><label>职业</label><input id="job" placeholder="如：行政/宝妈/程序员" value="普通家庭宝妈" /></div>
-      <div><label>兴趣 / 擅长</label><input id="interest" placeholder="如：做饭/理财/带娃" value="带娃、省钱、做家常菜" /></div>
+      <div><label>职业</label><input id="job" placeholder="如：行政/宝妈/程序员" /></div>
+      <div><label>兴趣 / 擅长</label><input id="interest" placeholder="如：做饭/理财/带娃" /></div>
     </div>
     <div class="row">
-      <div><label>每日可投入时间</label><input id="time" placeholder="如：1 小时" value="每天约 1 小时" /></div>
-      <div><label>已有资源</label><input id="resource" placeholder="如：手机/社群" value="一部手机、几年带娃经验" /></div>
+      <div><label>每日可投入时间</label><input id="time" placeholder="如：1 小时" /></div>
+      <div><label>已有资源</label><input id="resource" placeholder="如：手机/社群" /></div>
     </div>
     <button onclick="diagnose()">诊断赛道</button>
     <div id="r1" class="result"></div>
@@ -90,10 +96,10 @@
   <section class="step">
     <h2><span class="num">2</span> 定位生成</h2>
     <p class="hint">基于上一步赛道，结合你的经历与特质（含看似缺点的特质）生成人设。</p>
-    <label>选定 / 想做的赛道</label><input id="track" placeholder="如：省钱育儿" value="省钱育儿（母婴细分）" />
-    <label>个人经历</label><textarea id="experience" placeholder="如：带两个娃五年，踩过很多坑">带两个娃五年，普通家庭，钱不多但日子过得去。</textarea>
-    <label>优势</label><input id="strength" placeholder="如：共情强、会总结" value="共情强，能把复杂的事讲简单" />
-    <label>看似缺点的特质（会变成特色）</label><input id="flaw" placeholder="如：不善包装、普通" value="不精致、普通、没什么光环" />
+    <label>选定 / 想做的赛道</label><input id="track" placeholder="如：省钱育儿" />
+    <label>个人经历</label><textarea id="experience" placeholder="如：带两个娃五年，踩过很多坑"></textarea>
+    <label>优势</label><input id="strength" placeholder="如：共情强、会总结" />
+    <label>看似缺点的特质（会变成特色）</label><input id="flaw" placeholder="如：不善包装、普通" />
     <button onclick="position()">生成定位</button>
     <div id="r2" class="result"></div>
   </section>
@@ -102,8 +108,8 @@
   <section class="step">
     <h2><span class="num">3</span> 内容生成</h2>
     <p class="hint">基于定位生成可直接用的内容（口播脚本 / 图文）。</p>
-    <label>你的定位（一句话）</label><textarea id="mypos" placeholder="如：精打细算的二胎妈妈">精打细算的二胎妈妈，分享真实省钱育儿经。</textarea>
-    <label>想做的选题方向</label><input id="topic" placeholder="如：怎么给娃攒第一笔钱" value="月薪不高怎么给娃存下第一笔钱" />
+    <label>你的定位（一句话）</label><textarea id="mypos" placeholder="如：精打细算的二胎妈妈"></textarea>
+    <label>想做的选题方向</label><input id="topic" placeholder="如：怎么给娃攒第一笔钱" />
     <label>形式</label>
     <select id="format"><option>短视频口播脚本</option><option>图文笔记</option><option>朋友圈短文</option></select>
     <button onclick="content()">生成内容</button>
@@ -114,7 +120,7 @@
   <section class="step">
     <h2><span class="num">4</span> 爆款模板库</h2>
     <p class="hint">选你的赛道，AI 给可直接套用的爆款内容模板（结构 + 可套选题）。</p>
-    <label>赛道</label><input id="t_track" placeholder="如：省钱育儿" value="省钱育儿" />
+    <label>赛道</label><input id="t_track" placeholder="如：省钱育儿" />
     <button onclick="templates()">获取模板</button>
     <div id="r4" class="result"></div>
   </section>
@@ -123,8 +129,8 @@
   <section class="step">
     <h2><span class="num">5</span> 商业化规划</h2>
     <p class="hint">填账号阶段，AI 给变现路径与节奏建议。</p>
-    <label>账号阶段</label><input id="m_stage" placeholder="如：起号期（0-1000粉）" value="起号期（0-1000粉）" />
-    <label>赛道（可选）</label><input id="m_track" placeholder="如：省钱育儿" value="省钱育儿" />
+    <label>账号阶段</label><input id="m_stage" placeholder="如：起号期（0-1000粉）" />
+    <label>赛道（可选）</label><input id="m_track" placeholder="如：省钱育儿" />
     <button onclick="monetize()">生成规划</button>
     <div id="r5" class="result"></div>
   </section>
@@ -179,6 +185,30 @@ const $ = id => document.getElementById(id);
 const show = (el, html) => { el.innerHTML = html; el.classList.add("show"); };
 const esc = s => (s == null ? "" : String(s));
 function escapeHtml(s){ return String(s).replace(/[&<>]/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c])); }
+
+/* ---------- 轻量 Markdown 渲染（零依赖，先转义防 XSS） ---------- */
+function mdInline(t){
+  return t
+    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+    .replace(/\*([^*]+)\*/g, "<em>$1</em>")
+    .replace(/`([^`]+)`/g, "<code>$1</code>");
+}
+function renderMarkdown(src){
+  const lines = String(src).replace(/[&<>]/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c])).split(/\r?\n/);
+  let html = "", inUl = false, inOl = false;
+  const close = () => { if(inUl){ html += "</ul>"; inUl = false; } if(inOl){ html += "</ol>"; inOl = false; } };
+  for(const raw of lines){
+    let m;
+    if((m = raw.match(/^(#{1,4})\s+(.*)$/))){ close(); const lvl=m[1].length; let t=m[2].replace(/^#+\s*/,""); html += `<div class="md-h md-h${lvl}">${mdInline(t)}</div>`; continue; }
+    if((m = raw.match(/^[-*]\s+(.*)$/))){ if(!inUl){ close(); html += "<ul class='md-ul'>"; inUl = true; } html += `<li>${mdInline(m[1])}</li>`; continue; }
+    if((m = raw.match(/^\d+\.\s+(.*)$/))){ if(!inOl){ close(); html += "<ol class='md-ol'>"; inOl = true; } html += `<li>${mdInline(m[1])}</li>`; continue; }
+    if(raw.trim() === ""){ close(); continue; }
+    close();
+    html += `<div class="md-p">${mdInline(raw)}</div>`;
+  }
+  close();
+  return html;
+}
 
 /* ---------- 配置（后端地址） ---------- */
 function defaultCfg(){ return {backendBase:""}; }
@@ -239,7 +269,7 @@ async function runStep(endpoint, payload, renderFn, elId, stepName, title){
     const d = await callAPI(endpoint, payload);
     const el=$(elId);
     if(d.mode==="live"){
-      show(el, "<b>"+stepName+"（真实 AI）</b>\n\n"+escapeHtml(d.text));
+      show(el, `<div class="result-title">${esc(stepName)}（真实 AI）</div>`+renderMarkdown(d.text));
       withSave(el, stepName, title, d.text);
     } else if(d.mode==="mock"){
       const r=renderFn(d); show(el, r.html); withSave(el, stepName, title, r.text);
@@ -325,7 +355,7 @@ async function loadPlans(){
   const items=d.items||[];
   const box=$("plans");
   if(!items.length){ box.innerHTML='<p class="mini">还没有保存的方案。在每个步骤结果下方点「保存到我的方案」即可。</p>'; return; }
-  box.innerHTML = items.map(p=>`<div class="track"><div style="display:flex;justify-content:space-between;gap:8px"><b>${esc(p.kind)}</b><span class="mini">${esc(p.created_at)}</span></div><div class="mini">${esc(p.title||"")}</div><div style="white-space:pre-wrap;margin-top:6px">${escapeHtml(p.content)}</div><div style="margin-top:6px"><button class="ghost" onclick="delPlan(${p.id})">删除</button></div></div>`).join("");
+  box.innerHTML = items.map(p=>`<div class="track"><div style="display:flex;justify-content:space-between;gap:8px"><b>${esc(p.kind)}</b><span class="mini">${esc(p.created_at)}</span></div><div class="mini">${esc(p.title||"")}</div><div style="margin-top:8px">${renderMarkdown(p.content)}</div><div style="margin-top:8px"><button class="ghost" onclick="delPlan(${p.id})">删除</button></div></div>`).join("");
 }
 
 /* ---------- 前端内置兜底示例（后端不可达时提示用） ---------- */
