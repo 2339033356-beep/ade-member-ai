@@ -139,11 +139,9 @@
   <!-- Step 4 -->
   <section class="step">
     <h2><span class="num">4</span> 爆款教练</h2>
-    <p class="hint">把你的定位，变成一篇有爆款基因、完全是你自己的文章。做法：去微信搜一篇同赛道爆款 → 粘贴原文 → AI 拆真实结构 → 你填自己的料 → 出稿（文章 / 口播）。</p>
-    <label>我的定位（一句话，自动带入第 2 步，可改）</label>
-    <textarea id="bk_pos" placeholder="如：精打细算的二胎妈妈"></textarea>
-    <label>产出形式</label>
-    <select id="bk_fmt"><option>文章</option><option>短视频口播脚本</option><option>图文笔记</option></select>
+    <p class="hint">把你的定位，变成一篇有爆款基因、完全是你自己的文章。做法：去微信搜一篇同赛道爆款 → 粘贴原文 → AI 按你第 2 步的定位拆真实结构 → 你填自己的料 → 出稿。定位会自动带入，不用重填。</p>
+    <label>我的定位（自动带入第 2 步的「定位一句话」，可改）</label>
+    <textarea id="bk_pos" placeholder="如：我是精打细算的二胎妈妈，我要帮普通家庭妈妈解决'钱不多但想给娃最好'的育儿焦虑，用真实省钱踩坑+一周餐谱实测的方法。"></textarea>
     <label>粘贴我搜到的爆款原文（去微信 → 发现 → 搜一搜 → 文章 → 按最热，挑 1 篇 1 万+ 阅读的，连标题带正文粘进来）</label>
     <textarea id="bk_hot" style="min-height:120px" placeholder="把爆款标题和正文整段粘进来…"></textarea>
     <button onclick="bkStep1()">① 拆解爆款结构</button>
@@ -442,9 +440,38 @@ async function diagnose(){
   const p={job:$("job").value, interest:$("interest").value, time:$("time").value, resource:$("resource").value};
   await runStep("diagnose", p, renderDiagnose, "r1", "赛道诊断", "赛道诊断｜"+$("job").value);
 }
+let _posOneliner = ""; // 第 2 步生成的「定位一句话」，自动带入第 3/4 步
 async function position(){
   const p={track:$("track").value, experience:$("experience").value, strength:$("strength").value, flaw:$("flaw").value};
-  await runStep("position", p, renderPosition, "r2", "定位生成", "定位｜"+$("track").value);
+  const btn=event.target; btn.disabled=true; const old=btn.textContent; btn.textContent="生成中…";
+  try{
+    const d = await callAPI("position", p);
+    const el = $("r2");
+    if(d.mode==="live"){
+      _posOneliner = d.oneliner || extractOneliner(d.text) || "";
+      show(el, `<div class="result-title">定位生成（真实 AI）</div>`+renderMarkdown(d.text));
+      withSave(el, "定位生成", "定位｜"+p.track, d.text);
+    } else if(d.mode==="mock"){
+      _posOneliner = d.oneliner || "";
+      const r = renderPosition(d);
+      show(el, r.html);
+      withSave(el, "定位生成", "定位｜"+p.track, r.text);
+    } else {
+      show(el, "⚠️ 返回格式异常");
+    }
+    // 自动带入第 3 步（内容方向库）和第 4 步（爆款教练）的「我的定位」
+    if(_posOneliner){
+      if($("cp_pos")) $("cp_pos").value = _posOneliner;
+      if($("bk_pos")) $("bk_pos").value = _posOneliner;
+    }
+    refreshMe();
+  }catch(e){ show($("r2"), "⚠️ "+e.message); }
+  finally{ btn.disabled=false; btn.textContent=old; }
+}
+function extractOneliner(text){
+  if(!text) return "";
+  const m = text.match(/定位一句话[：:]\s*(.+)/);
+  return m ? m[1].trim().replace(/[。.]$/,"").trim() : "";
 }
 async function content(){
   const p={position:$("mypos").value, topic:$("topic").value, format:$("format").value};
@@ -455,11 +482,10 @@ async function bkStep1(){
   let pos = $("bk_pos").value.trim();
   if(!pos && $("cp_pos")) pos = $("cp_pos").value.trim();
   const hot = $("bk_hot").value.trim();
-  const fmt = $("bk_fmt").value;
   if(!hot){ alert("先粘贴一条爆款原文（去微信搜一搜找同赛道 1 万+ 阅读的文章）"); return; }
   const btn = event.target; btn.disabled=true; const old=btn.textContent; btn.textContent="拆解中…";
   try{
-    const d = await callAPI("baokuan-step1", {position:pos, hot_content:hot, format:fmt});
+    const d = await callAPI("baokuan-step1", {position:pos, hot_content:hot});
     const box = $("bk_r1");
     const tag = d.mode==="live" ? "爆款结构拆解（真实 AI）" : "爆款结构拆解（演示）";
     show(box, `<div class="result-title">${tag}</div>`+renderMarkdown(d.text));
@@ -483,17 +509,16 @@ async function bkStep2(){
   let pos = $("bk_pos").value.trim();
   if(!pos && $("cp_pos")) pos = $("cp_pos").value.trim();
   const hot = $("bk_hot").value.trim();
-  const fmt = $("bk_fmt").value;
   const structure = ($("bk_r1").innerText||"").trim();
   const answers = $("bk_answers").value.trim();
   if(!answers){ alert("先按问题清单填你的真实经历"); return; }
   const btn = event.target; btn.disabled=true; const old=btn.textContent; btn.textContent="生成中…";
   try{
-    const d = await callAPI("baokuan-step2", {position:pos, hot_content:hot, format:fmt, structure, answers});
+    const d = await callAPI("baokuan-step2", {position:pos, hot_content:hot, structure, answers});
     const box = $("bk_r2");
     const tag = d.mode==="live" ? "我的写作脚手架（真实 AI）" : "我的写作脚手架（演示）";
     show(box, `<div class="result-title">${tag}</div>`+renderMarkdown(d.text));
-    withSave(box, "爆款教练出稿", (pos||"爆款教练")+"｜"+fmt, d.text);
+    withSave(box, "爆款教练出稿", (pos||"爆款教练")+"｜文章", d.text);
     refreshMe();
   }catch(e){ show($("bk_r2"), "⚠️ "+e.message); }
   finally{ btn.disabled=false; btn.textContent=old; }
@@ -578,7 +603,14 @@ function renderDiagnose(d){ let html="<b>推荐赛道</b>", text="推荐赛道�
   (d.recommend||[]).forEach((t,i)=>{ html+=`<div class="track"><b>${esc(t.track)}</b><br><span class="mini">理由：</span>${esc(t.reason)}<br><span class="tag">起步难度：${esc(t.difficulty)}</span><span class="tag">变现潜力：${esc(t.cash)}</span></div>`;
     text+=`${i+1}. ${t.track}（难度${t.difficulty}/变现${t.cash}）\n   理由：${t.reason}\n`; });
   return {html,text}; }
-function renderPosition(d){ let html="<b>定位方案</b>", text="定位方案：\n";
+function renderPosition(d){
+  let html = "";
+  if(d.oneliner){
+    html += `<div class="result-title" style="margin-bottom:8px">📌 我的定位一句话</div>`
+      + `<div class="track" style="background:#eaf1ff;border-color:#bcd3ff">${esc(d.oneliner)}</div>`;
+  }
+  html += "<b>定位方案</b>";
+  let text = "定位一句话：" + (d.oneliner||"") + "\n定位方案：\n";
   (d.options||[]).forEach((o,i)=>{ html+=`<div class="track"><span class="tag">${esc(o.tag)}</span><div><span class="mini">账号简介：</span>${esc(o.bio)}</div><div><span class="mini">内容方向：</span>${esc(o.directions.join(" / "))}</div><div><span class="mini">为什么成立：</span>${esc(o.why)}</div></div>`;
     text+=`${i+1}. ${o.tag}\n   简介：${o.bio}\n   方向：${o.directions.join(" / ")}\n   成立原因：${o.why}\n`; });
   return {html,text}; }

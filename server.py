@@ -74,6 +74,10 @@ PROMPTS = {
         "基于学员的赛道、他真实经历、他擅长的，还有他自己觉得'是缺点'的那些特质，帮他生成 2-3 个细分配位。"
         "关键：把他眼里的'缺点'翻成'别人学不来的特色'。比如嘴笨→真实不做作，普通→最有共鸣。"
         "每个定位给：人设标签、一句账号简介（像他本人会说的）、3 个内容方向、为什么这个定位能立住。"
+        "\n\n【输出第一条硬性要求】在正文最开头，必须单独输出一行定位一句话，格式严格如下："
+        "定位一句话：我是<身份/人设>，我要帮<目标人群>解决<具体问题>，用<你的方法/打法>。"
+        "例如：定位一句话：我是精打细算的二胎妈妈，我要帮普通家庭妈妈解决'钱不多但想给娃最好'的育儿焦虑，用真实省钱踩坑+一周餐谱实测的方法。"
+        "这一行必须真实、具体、不空泛，学员会直接拿它去第 4 步拆爆款，所以别写虚话。"
     ),
     "content": (
         "你是一个真实在更文更视频的博主，帮学员写一条他明天就能发的内容（短视频口播脚本或图文）。"
@@ -216,6 +220,7 @@ MOCK = {
     },
     "position": {
         "mode": "mock",
+        "oneliner": "我是精打细算的二胎妈妈，我要帮普通家庭妈妈解决'钱不多但想给娃最好'的育儿焦虑，用真实省钱踩坑+一周餐谱实测的方法。",
         "options": [
             {"tag": "精打细算的二胎妈妈", "bio": "普通家庭月入有限，但把日子过得有滋有味——分享真实省钱育儿经。", "directions": ["月薪Xk怎么给孩子攒下第一桶金", "那些'智商税'母婴用品我替你踩过了", "一周家庭餐谱：好吃不贵"], "why": "把'钱不多'这个看似劣势变成'最懂普通人'的优势，同类妈妈天然信任。"},
             {"tag": "不完美的真实妈妈", "bio": "不装精致、不晒逆袭，记录一个普通妈妈怎么笨拙但认真地养娃。", "directions": ["今天我又搞砸了的一件小事", "娃生病那晚我做的事", "和老公分工带娃的真相"], "why": "'真实缺点'降低距离感，评论区会变成同温层，黏性极高。"},
@@ -512,6 +517,17 @@ def call_llm(system, user):
         return "[AI调用失败] " + str(e)
 
 
+def extract_position_oneliner(text):
+    """从定位生成结果里抽取『定位一句话：…』那一行，供前端自动带入第 3/4 步。"""
+    if not text:
+        return ""
+    import re
+    m = re.search(r"定位一句话[：:]\s*(.+)", text)
+    if m:
+        return m.group(1).strip().strip("。").strip()
+    return ""
+
+
 # ---------- 新榜爆款数据源 ----------
 NEWRANK_TYPE_MAP = [
     ("育儿|母婴|宝妈|娃|带娃|宝宝", "育儿"),
@@ -722,7 +738,7 @@ class Handler(BaseHTTPRequestHandler):
         """自检端点：浏览器直接打开 /api/health 就能看到配置是否生效（不泄露任何密钥）"""
         info = {
             "ok": True,
-            "版本": "v8",
+            "版本": "v8.2",
             "数据库模式": "Postgres（持久化·重部署不丢账号）" if USE_PG else "SQLite（临时·重部署会丢账号）",
             "持久化": USE_PG,
             "AI已配置": bool(API_KEY),
@@ -730,7 +746,7 @@ class Handler(BaseHTTPRequestHandler):
             "管理员后台已启用": bool(ADMIN_TOKEN),
             "开放注册": ALLOW_REGISTER,
             "爆款教练模式": "站内闭环·学员手动贴爆款（无需外部API）",
-            "内容方向库": "定位→30条方向+微信标签",
+            "定位一句话": "第2步定位→自动带入第3/4步（我是谁/帮谁/解决什么问题/用什么方法）",
             "成稿润色器": "框架+草稿→修正错别字病句",
         }
         try:
@@ -770,7 +786,12 @@ class Handler(BaseHTTPRequestHandler):
         ai = call_llm(PROMPTS[endpoint] + FORMAT_TIP, AI_HANDLERS[endpoint](req))
         meta = {"used": d["daily_count"], "quota": d["daily_quota"]}
         if ai:
-            self._send_json({"mode": "live", "text": ai, **meta})
+            resp = {"mode": "live", "text": ai, **meta}
+            if endpoint == "position":
+                ol = extract_position_oneliner(ai)
+                if ol:
+                    resp["oneliner"] = ol
+            self._send_json(resp)
         else:
             self._send_json({**MOCK[endpoint], **meta})
 
