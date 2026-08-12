@@ -115,13 +115,11 @@
 
   <!-- Step 3 -->
   <section class="step">
-    <h2><span class="num">3</span> 内容生成</h2>
-    <p class="hint">基于定位生成可直接用的内容（口播脚本 / 图文）。</p>
-    <label>你的定位（一句话）</label><textarea id="mypos" placeholder="如：精打细算的二胎妈妈"></textarea>
-    <label>想做的选题方向</label><input id="topic" placeholder="如：怎么给娃攒第一笔钱" />
-    <label>形式</label>
-    <select id="format"><option>短视频口播脚本</option><option>图文笔记</option><option>朋友圈短文</option></select>
-    <button onclick="content()">生成内容</button>
+    <h2><span class="num">3</span> 内容方向库</h2>
+    <p class="hint">定位确定后，一键生成 30 条可发的内容方向，每条带「微信搜索标签」——拿标签去微信搜一搜找同主题爆款，找到后到下一步贴进来拆框架。</p>
+    <label>我的定位/人设（自动带入第 2 步，可改）</label>
+    <textarea id="cp_pos" placeholder="如：精打细算的二胎妈妈"></textarea>
+    <button onclick="contentPlan()">生成 30 条内容方向</button>
     <div id="r3" class="result"></div>
   </section>
 
@@ -145,9 +143,21 @@
     <div id="bk_r2" class="result"></div>
   </section>
 
-  <!-- Step 5 -->
+  <!-- Step 5 (v8 新增) -->
   <section class="step">
-    <h2><span class="num">5</span> 商业化规划</h2>
+    <h2><span class="num">5</span> 成稿润色器</h2>
+    <p class="hint">把上一步的爆款框架贴进白框，再写你的草稿，AI 帮你修正错别字、病句，理顺语句，保留你的真实语气。在第 4 步点「送去润色」可自动带入框架。</p>
+    <label>爆款框架（白框：从上一步「送去润色」自动带入，也可手贴）</label>
+    <textarea id="pl_framework" style="min-height:90px" placeholder="把爆款结构拆解（框架+经历问题清单）粘贴到这里…"></textarea>
+    <label>我的草稿初稿（框架每个位置填你的真实素材，越具体越好：时间/地点/对话/数字/情绪）</label>
+    <textarea id="pl_draft" style="min-height:160px" placeholder="在这里写你的初稿…"></textarea>
+    <button onclick="polish()">润色优化</button>
+    <div id="r5b" class="result"></div>
+  </section>
+
+  <!-- Step 6 -->
+  <section class="step">
+    <h2><span class="num">6</span> 商业化规划</h2>
     <p class="hint">填账号阶段，AI 给变现路径与节奏建议。</p>
     <label>账号阶段</label><input id="m_stage" placeholder="如：起号期（0-1000粉）" />
     <label>赛道（可选）</label><input id="m_track" placeholder="如：省钱育儿" />
@@ -430,7 +440,7 @@ async function content(){
 /* ---------- 第 4 步：爆款教练（手动贴爆款 + AI 拆结构 + 填经历出稿） ---------- */
 async function bkStep1(){
   let pos = $("bk_pos").value.trim();
-  if(!pos && $("mypos")) pos = $("mypos").value.trim();
+  if(!pos && $("cp_pos")) pos = $("cp_pos").value.trim();
   const hot = $("bk_hot").value.trim();
   const fmt = $("bk_fmt").value;
   if(!hot){ alert("先粘贴一条爆款原文（去微信搜一搜找同赛道 1 万+ 阅读的文章）"); return; }
@@ -440,6 +450,15 @@ async function bkStep1(){
     const box = $("bk_r1");
     const tag = d.mode==="live" ? "爆款结构拆解（真实 AI）" : "爆款结构拆解（演示）";
     show(box, `<div class="result-title">${tag}</div>`+renderMarkdown(d.text));
+    const sendBtn = document.createElement("button");
+    sendBtn.className = "ghost"; sendBtn.style.marginTop = "10px";
+    sendBtn.textContent = "→ 拿这个框架去成稿润色（第 5 步）";
+    sendBtn.onclick = () => {
+      $("pl_framework").value = (box.innerText || "").replace(/爆款结构拆解（(?:演示|真实 AI)）/, "").trim();
+      $("pl_draft").focus();
+      $("pl_draft").scrollIntoView({behavior:"smooth"});
+    };
+    box.appendChild(sendBtn);
     $("bk_step2").style.display = "block";
     $("bk_step2").scrollIntoView({behavior:"smooth"});
     refreshMe();
@@ -449,7 +468,7 @@ async function bkStep1(){
 
 async function bkStep2(){
   let pos = $("bk_pos").value.trim();
-  if(!pos && $("mypos")) pos = $("mypos").value.trim();
+  if(!pos && $("cp_pos")) pos = $("cp_pos").value.trim();
   const hot = $("bk_hot").value.trim();
   const fmt = $("bk_fmt").value;
   const structure = ($("bk_r1").innerText||"").trim();
@@ -466,6 +485,58 @@ async function bkStep2(){
   }catch(e){ show($("bk_r2"), "⚠️ "+e.message); }
   finally{ btn.disabled=false; btn.textContent=old; }
 }
+/* ---------- 第 3 步：内容方向库（定位 → 30 条方向 + 微信标签） ---------- */
+async function contentPlan(){
+  let pos = $("cp_pos").value.trim();
+  if(!pos){ alert("先填写你的定位/人设（或先完成第 2 步定位）"); return; }
+  const btn = event.target; btn.disabled = true; const old = btn.textContent; btn.textContent = "生成中…";
+  try{
+    const d = await callAPI("content-plan", {position: pos});
+    const box = $("r3");
+    if(d.plans && d.plans.length){
+      const title = d.mode === "live" ? "内容方向库（真实 AI）" : "内容方向库（演示）";
+      let html = `<div class="result-title">${title} · 共 ${d.plans.length} 条</div>`
+        + `<p class="mini">拿每条的「微信搜索标签」去微信搜一搜，找同主题爆款 → 到下一步（第 4 步）贴进来拆框架。</p>`;
+      d.plans.forEach((p, i) => {
+        const tags = (p.tags || []).map(t => `<span class="tag" style="cursor:pointer" onclick="copyTag('${esc(t)}')" title="点击复制去微信搜">${esc(t)}</span>`).join("");
+        html += `<div class="track"><div style="display:flex;justify-content:space-between;gap:8px"><b>${i+1}. ${esc(p.title)}</b></div>`
+          + `<div>${tags}</div>`
+          + (p.angle ? `<div class="mini">${esc(p.angle)}</div>` : "");
+      });
+      show(box, html);
+      withSave(box, "内容方向库", pos, JSON.stringify(d.plans, null, 2));
+    } else if(d.raw){
+      show(box, `<div class="result-title">内容方向（真实 AI）</div>` + renderMarkdown(d.raw));
+      withSave(box, "内容方向库", pos, d.raw);
+    } else {
+      show(box, "⚠️ 生成失败，请重试");
+    }
+    refreshMe();
+  }catch(e){ show($("r3"), "⚠️ " + e.message); }
+  finally{ btn.disabled = false; btn.textContent = old; }
+}
+function copyTag(t){
+  if(navigator.clipboard) navigator.clipboard.writeText(t).catch(()=>{});
+  alert("已复制标签：「" + t + "」\n去微信 → 发现 → 搜一搜，粘贴即可找同主题爆款");
+}
+
+/* ---------- 第 5 步：成稿润色器（框架 + 草稿 → 修正错别字病句） ---------- */
+async function polish(){
+  const framework = $("pl_framework").value.trim();
+  const draft = $("pl_draft").value.trim();
+  if(!draft){ alert("先在第 5 步「我的草稿初稿」里写点内容"); return; }
+  const btn = event.target; btn.disabled = true; const old = btn.textContent; btn.textContent = "润色中…";
+  try{
+    const d = await callAPI("polish", {framework, draft});
+    const box = $("r5b");
+    const tag = d.mode === "live" ? "润色后的成稿（真实 AI）" : "润色后的成稿（演示）";
+    show(box, `<div class="result-title">${tag}</div>` + renderMarkdown(d.text));
+    withSave(box, "成稿润色", (framework ? "框架润色" : "草稿润色"), d.text);
+    refreshMe();
+  }catch(e){ show($("r5b"), "⚠️ " + e.message); }
+  finally{ btn.disabled = false; btn.textContent = old; }
+}
+
 async function monetize(){
   const p={stage:$("m_stage").value, track:$("m_track").value};
   await runStep("monetize", p, renderMonetize, "r5", "商业化规划", "商业化｜"+$("m_stage").value);

@@ -159,6 +159,52 @@ BAOKUAN_STEP2_PROMPT = """你是一位温暖又专业的「IP爆款内容教练�
 
 【铁律】学员说"没有"的经历绝不虚构；定位话术和金句保留学员自己的语气。"""
 
+# 内容方向库（v8 新增）：定位确定后，一键生成 30 条可发的内容方向，每条带「微信搜索标签」
+# 学员拿标签去微信搜一搜找同主题爆款，找到后到「爆款教练」贴进来拆框架
+CONTENT_PLAN_PROMPT = """你是一个帮普通人做自媒体内容规划的教练。学员已经确定了定位/人设，请你基于这个定位，生成 30 条他接下来 30-100 天可以持续发的内容方向（选题）。
+
+要求：
+- 覆盖他定位下的不同角度：亲身经历 / 观点输出 / 避坑提醒 / 方法教学 / 情绪共鸣 / 互动提问 / 节点热点 / 好物测评…，不要全是同一种。
+- 每条给 2-4 个「微信搜索标签」——这是短关键词，学员会拿去微信「搜一搜」里找同主题的爆款文章/视频。标签要具体、像普通人会搜的词（如「辅食机 智商税」「二胎 花销」「普通妈妈 委屈」），别太长、别写成句子。
+- 每条一句话说明这个方向的角度/为什么值得做。
+- 全部基于他的真实定位，别飘到不相关赛道。
+- 用简体中文，口语、真实，别空谈。
+
+只输出 JSON，不要输出任何其他文字。格式严格如下：
+[{"title":"选题标题","tags":["标签1","标签2"],"angle":"这句话为什么值得做"}, ... 共 30 条 ...]"""
+
+# 成稿润色器（v8 新增）：爆款框架 + 学员草稿 → AI 修正错别字/病句、理顺语句、保留真实语气
+POLISH_PROMPT = """你是一个帮学员润色稿子的编辑。学员已经拿到一条爆款的「结构框架」，并据此写出了自己的草稿初稿。
+
+请你在框架的节奏下，把这份草稿润色成一篇可以发布的成稿：
+- 修正错别字、标点错误、病句，理顺不通顺的句子；
+- 保持学员的真实语气和原意，不替他虚构任何经历、数字、对话、人名；
+- 框架要求的段落顺序和情绪节点尽量保留（标题/钩子/情绪点/金句/引导）；
+- 保留学员自己的真实细节（时间/地点/对话/数字/情绪），只改表达、不改事实；
+- 像他本人会发的那样，不要培训机构腔、不要成功学、不要画大饼。
+
+直接输出润色后的完整成稿（可用 Markdown，标题用 ## 表示层级），不要输出任何解释、不要输出「修改说明」「以下是润色稿」之类前缀。"""
+
+def parse_plan_json(text):
+    """从 AI 返回里尽量抽出 JSON 数组（兼容前后有废话的情况）。失败返回 None。"""
+    import re
+    s = (text or "").strip()
+    try:
+        arr = json.loads(s)
+        if isinstance(arr, list):
+            return arr
+    except Exception:
+        pass
+    m = re.search(r"\[.*\]", s, re.S)
+    if m:
+        try:
+            arr = json.loads(m.group(0))
+            if isinstance(arr, list):
+                return arr
+        except Exception:
+            pass
+    return None
+
 MOCK = {
     "diagnose": {
         "mode": "mock",
@@ -204,6 +250,46 @@ MOCK = {
             {"type": "低价知识产品", "desc": "把省钱方法论做成低价训练营/电子手册", "cash": "中高", "when": "有稳定内容后"},
         ],
         "note": "前3个月只做信任和私域积累，别急着卖课。",
+    },
+    "content_plan": {
+        "mode": "mock",
+        "plans": [
+            {"title": "我花800块买的辅食机，第3天就吃灰了", "tags": ["辅食机 智商税", "二胎 花销", "育儿 踩坑"], "angle": "真实踩坑最有共鸣，开启避坑系列"},
+            {"title": "普通二胎家庭，一个月菜钱到底要多少", "tags": ["二胎 花销", "家庭餐费", "省钱 日常"], "angle": "用真实数字建立信任，引发同阶层对账单"},
+            {"title": "月薪8k，我是怎么给娃存下第一笔钱的", "tags": ["普通家庭 攒钱", "给孩子存钱", "月薪8k"], "angle": "结果见证+方法，适合做爆款钩子"},
+            {"title": "那些年，我妈让我别买的母婴用品", "tags": ["母婴 避坑", "婆婆 带娃", "育儿 矛盾"], "angle": "代际冲突话题自带情绪流量"},
+            {"title": "周末带娃不花钱，我们去了这三个地方", "tags": ["免费 遛娃", "周末 去哪", "亲子 日常"], "angle": "实用+情绪，易被收藏"},
+            {"title": "二胎之后，我和老公第一次吵架是因为钱", "tags": ["二胎 矛盾", "夫妻 钱", "真实 婚姻"], "angle": "真实婚姻细节，强共鸣"},
+            {"title": "别再囤货了，这5样母婴品我劝你现用现买", "tags": ["母婴 囤货", "理智 消费", "新手 妈妈"], "angle": "反直觉观点，引发讨论"},
+            {"title": "幼儿园门口听到的三句话，让我破防了", "tags": ["幼儿园 日常", "妈妈 情绪", "普通 委屈"], "angle": "场景还原+情绪点"},
+            {"title": "我用「等一周」原则，半年省下一辆车钱", "tags": ["消费 克制", "省钱 方法", "二胎 妈妈"], "angle": "方法教学+夸张结果钩子"},
+            {"title": "娃生病那晚，我在急诊室学到的三件事", "tags": ["娃 生病", "急诊 经历", "妈妈 成长"], "angle": "危机叙事+干货"},
+            {"title": "普通妈妈的自媒体第一篇，就这样发了", "tags": ["新手 自媒体", "普通 妈妈", "起步 真实"], "angle": "陪伴式记录，降低门槛"},
+            {"title": "婆婆带娃和妈妈带娃，差别有多大", "tags": ["婆婆 带娃", "带娃 方式", "家庭 关系"], "angle": "对比体，易引战讨论"},
+            {"title": "我把娃的童年照片做成了一本书", "tags": ["记录 童年", "亲子 仪式", "妈妈 用心"], "angle": "温暖+方法，适合种草"},
+            {"title": "二胎家庭的「老大专属时间」，太重要了", "tags": ["二胎 老尴", "平衡 爱", "育儿 心理"], "angle": "观点输出，引发反思"},
+            {"title": "超市临期区，是我家的宝藏角落", "tags": ["临期 食品", "超市 省钱", "生活 智慧"], "angle": "反差感+实用"},
+            {"title": "娃的入园焦虑，被我用一招化解了", "tags": ["入园 焦虑", "分离 恐惧", "育儿 方法"], "angle": "方法教学+结果"},
+            {"title": "普通家庭的仪式感，不花钱也够浓", "tags": ["家庭 仪式感", "不花钱", "普通 幸福"], "angle": "情绪共鸣+反转"},
+            {"title": "我退了99%的母婴群，世界清净了", "tags": ["母婴 群", "信息 焦虑", "做减法"], "angle": "反共识观点"},
+            {"title": "娃第一次说「妈妈我爱你」，我当场哭了", "tags": ["娃 暖心", "妈妈 泪目", "真实 瞬间"], "angle": "情绪金句位"},
+            {"title": "二胎后我重新找了份兼职，不为钱", "tags": ["二胎 妈妈", "兼职 意义", "自我 价值"], "angle": "自我成长话题"},
+            {"title": "别给娃报班了，先带他认识菜市场", "tags": ["不报班", "生活 教育", "接地气"], "angle": "反内卷观点"},
+            {"title": "我家的「犯错不挨骂」实验，第30天", "tags": ["育儿 实验", "不吼 娃", "耐心 妈妈"], "angle": "连载体+结果"},
+            {"title": "老公带娃的一天，比我上班还累", "tags": ["老公 带娃", "丧偶 式育儿", "真实 吐槽"], "angle": "吐槽体自带流量"},
+            {"title": "普通妈妈的朋友圈，也有高光时刻", "tags": ["妈妈 朋友圈", "普通 闪光", "自我 记录"], "angle": "身份认同"},
+            {"title": "我用旧衣服给娃改了个小书包", "tags": ["旧物 改造", "手工 妈妈", "省钱 创意"], "angle": "动手+省钱"},
+            {"title": "娃的压岁钱，我这样存下了", "tags": ["压岁钱", "给娃存钱", "理财 启蒙"], "angle": "节点热点（过年）"},
+            {"title": "二胎家庭的早餐，10分钟搞定", "tags": ["二胎 早餐", "快手 食谱", "妈妈 实用"], "angle": "实用收藏"},
+            {"title": "我和娃的「睡前三句话」，坚持一年了", "tags": ["睡前 仪式", "亲子 沟通", "长期 习惯"], "angle": "方法+坚持结果"},
+            {"title": "普通妈妈也会被网暴？我经历了一次", "tags": ["宝妈 网暴", "真实 遭遇", "心理 边界"], "angle": "冲突叙事"},
+            {"title": "带娃去公园，我戒掉了手机", "tags": ["带娃 专注", "戒 手机", "陪伴 质量"], "angle": "自律+反思"},
+            {"title": "二胎后，我终于学会了喊累", "tags": ["妈妈 喊累", "自我 关怀", "真实 疲惫"], "angle": "情绪出口，强共鸣"},
+        ],
+    },
+    "polish": {
+        "mode": "mock",
+        "text": "（演示·未配置真实 AI 时的示例）\n\n## 我花800块买的辅食机，第3天就吃灰了\n\n说实话，当初看直播间那段演示，我心里一长草就下单了。结果收到货才发现，娃根本不吃泥糊——他就要抓着啃。那台机器现在躺在柜子顶上，落了一层灰。\n\n后来我想通了：普通家庭带娃，最贵的不是买不起，是买了用不上。先借朋友的、先试一周，再决定要不要花钱，能省下大半冤枉钱。\n\n你家有这种「买来就后悔」的东西吗？评论区聊聊，我整理了一份「母婴避坑清单」发你。",
     },
 }
 
@@ -565,6 +651,10 @@ class Handler(BaseHTTPRequestHandler):
             return self._api_baokuan_step1(self._read_json())
         if endpoint == "baokuan-step2":
             return self._api_baokuan_step2(self._read_json())
+        if endpoint == "content-plan":
+            return self._api_content_plan(self._read_json())
+        if endpoint == "polish":
+            return self._api_polish(self._read_json())
         self._send_json({"error": "unknown endpoint"}, 404)
 
     def do_DELETE(self):
@@ -632,7 +722,7 @@ class Handler(BaseHTTPRequestHandler):
         """自检端点：浏览器直接打开 /api/health 就能看到配置是否生效（不泄露任何密钥）"""
         info = {
             "ok": True,
-            "版本": "v7",
+            "版本": "v8",
             "数据库模式": "Postgres（持久化·重部署不丢账号）" if USE_PG else "SQLite（临时·重部署会丢账号）",
             "持久化": USE_PG,
             "AI已配置": bool(API_KEY),
@@ -640,6 +730,8 @@ class Handler(BaseHTTPRequestHandler):
             "管理员后台已启用": bool(ADMIN_TOKEN),
             "开放注册": ALLOW_REGISTER,
             "爆款教练模式": "站内闭环·学员手动贴爆款（无需外部API）",
+            "内容方向库": "定位→30条方向+微信标签",
+            "成稿润色器": "框架+草稿→修正错别字病句",
         }
         try:
             c = db_conn()
@@ -801,6 +893,45 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json({"mode": "live", "text": text, **meta})
         else:
             self._send_json({"mode": "mock", "text": MOCK_BAOKUAN_STEP2, **meta})
+
+    # ---------- 内容方向库（v8：定位 → 30 条内容方向 + 微信搜索标签） ----------
+    def _api_content_plan(self, req):
+        r = self._require_quota()
+        if not r:
+            return
+        user, d = r
+        position = (req.get("position") or "").strip()
+        if not position:
+            return self._send_json({"error": "请先填写你的定位/人设（或先完成第 2 步定位）"}, 400)
+        text = call_llm(CONTENT_PLAN_PROMPT, "学员定位/人设：" + position)
+        meta = {"used": d["daily_count"], "quota": d["daily_quota"]}
+        if text and not text.startswith("[AI调用失败]"):
+            plans = parse_plan_json(text)
+            if plans:
+                return self._send_json({"mode": "live", "plans": plans, **meta})
+            # AI 没按 JSON 返回：降级成纯文本展示（仍扣了配额，但能看）
+            return self._send_json({"mode": "live", "plans": None, "raw": text, **meta})
+        return self._send_json({"mode": "mock", "plans": MOCK["content_plan"]["plans"], **meta})
+
+    # ---------- 成稿润色器（v8：爆款框架 + 学员草稿 → 修正错别字病句） ----------
+    def _api_polish(self, req):
+        r = self._require_quota()
+        if not r:
+            return
+        user, d = r
+        framework = (req.get("framework") or "").strip()
+        draft = (req.get("draft") or "").strip()
+        if not draft:
+            return self._send_json({"error": "请先在「我的草稿初稿」里写点内容"}, 400)
+        user_msg = (
+            f"==== 爆款结构框架（参考节奏，可空）====\n{framework}\n\n"
+            f"==== 学员草稿初稿（请润色：改错别字/病句，保留真实语气）====\n{draft}"
+        )
+        text = call_llm(POLISH_PROMPT, user_msg)
+        meta = {"used": d["daily_count"], "quota": d["daily_quota"]}
+        if text and not text.startswith("[AI调用失败]"):
+            return self._send_json({"mode": "live", "text": text, **meta})
+        return self._send_json({"mode": "mock", "text": MOCK["polish"]["text"], **meta})
 
     # ---------- 方案存档 ----------
     def _api_list_schemes(self):
