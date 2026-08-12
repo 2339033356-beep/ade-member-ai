@@ -127,11 +127,22 @@
 
   <!-- Step 4 -->
   <section class="step">
-    <h2><span class="num">4</span> 爆款模板库</h2>
-    <p class="hint">选你的赛道，AI 给可直接套用的爆款内容模板（结构 + 可套选题）。</p>
-    <label>赛道</label><input id="t_track" placeholder="如：省钱育儿" />
-    <button onclick="templates()">获取模板</button>
-    <div id="r4" class="result"></div>
+    <h2><span class="num">4</span> 爆款教练</h2>
+    <p class="hint">把你的定位，变成一篇有爆款基因、完全是你自己的文章。做法：去微信搜一篇同赛道爆款 → 粘贴原文 → AI 拆真实结构 → 你填自己的料 → 出稿（文章 / 口播）。</p>
+    <label>我的定位（一句话，自动带入第 2 步，可改）</label>
+    <textarea id="bk_pos" placeholder="如：精打细算的二胎妈妈"></textarea>
+    <label>产出形式</label>
+    <select id="bk_fmt"><option>文章</option><option>短视频口播脚本</option><option>图文笔记</option></select>
+    <label>粘贴我搜到的爆款原文（去微信 → 发现 → 搜一搜 → 文章 → 按最热，挑 1 篇 1 万+ 阅读的，连标题带正文粘进来）</label>
+    <textarea id="bk_hot" style="min-height:120px" placeholder="把爆款标题和正文整段粘进来…"></textarea>
+    <button onclick="bkStep1()">① 拆解爆款结构</button>
+    <div id="bk_r1" class="result"></div>
+    <div id="bk_step2" style="display:none">
+      <label>按上面的「经历问题清单」填我的真实素材（一段段对应着写，越具体越好：时间 / 地点 / 对话 / 数字）</label>
+      <textarea id="bk_answers" style="min-height:120px" placeholder="问题1：…&#10;我的回答：…"></textarea>
+      <button onclick="bkStep2()">② 生成我的稿</button>
+    </div>
+    <div id="bk_r2" class="result"></div>
   </section>
 
   <!-- Step 5 -->
@@ -416,9 +427,44 @@ async function content(){
   const p={position:$("mypos").value, topic:$("topic").value, format:$("format").value};
   await runStep("content", p, renderContent, "r3", "内容生成", "内容｜"+$("topic").value);
 }
-async function templates(){
-  const p={track:$("t_track").value};
-  await runStep("templates", p, renderTemplates, "r4", "爆款模板", "模板｜"+$("t_track").value);
+/* ---------- 第 4 步：爆款教练（手动贴爆款 + AI 拆结构 + 填经历出稿） ---------- */
+async function bkStep1(){
+  let pos = $("bk_pos").value.trim();
+  if(!pos && $("mypos")) pos = $("mypos").value.trim();
+  const hot = $("bk_hot").value.trim();
+  const fmt = $("bk_fmt").value;
+  if(!hot){ alert("先粘贴一条爆款原文（去微信搜一搜找同赛道 1 万+ 阅读的文章）"); return; }
+  const btn = event.target; btn.disabled=true; const old=btn.textContent; btn.textContent="拆解中…";
+  try{
+    const d = await callAPI("baokuan-step1", {position:pos, hot_content:hot, format:fmt});
+    const box = $("bk_r1");
+    const tag = d.mode==="live" ? "爆款结构拆解（真实 AI）" : "爆款结构拆解（演示）";
+    show(box, `<div class="result-title">${tag}</div>`+renderMarkdown(d.text));
+    $("bk_step2").style.display = "block";
+    $("bk_step2").scrollIntoView({behavior:"smooth"});
+    refreshMe();
+  }catch(e){ show($("bk_r1"), "⚠️ "+e.message); }
+  finally{ btn.disabled=false; btn.textContent=old; }
+}
+
+async function bkStep2(){
+  let pos = $("bk_pos").value.trim();
+  if(!pos && $("mypos")) pos = $("mypos").value.trim();
+  const hot = $("bk_hot").value.trim();
+  const fmt = $("bk_fmt").value;
+  const structure = ($("bk_r1").innerText||"").trim();
+  const answers = $("bk_answers").value.trim();
+  if(!answers){ alert("先按问题清单填你的真实经历"); return; }
+  const btn = event.target; btn.disabled=true; const old=btn.textContent; btn.textContent="生成中…";
+  try{
+    const d = await callAPI("baokuan-step2", {position:pos, hot_content:hot, format:fmt, structure, answers});
+    const box = $("bk_r2");
+    const tag = d.mode==="live" ? "我的写作脚手架（真实 AI）" : "我的写作脚手架（演示）";
+    show(box, `<div class="result-title">${tag}</div>`+renderMarkdown(d.text));
+    withSave(box, "爆款教练出稿", (pos||"爆款教练")+"｜"+fmt, d.text);
+    refreshMe();
+  }catch(e){ show($("bk_r2"), "⚠️ "+e.message); }
+  finally{ btn.disabled=false; btn.textContent=old; }
 }
 async function monetize(){
   const p={stage:$("m_stage").value, track:$("m_track").value};

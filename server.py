@@ -16,6 +16,7 @@ import os
 import hashlib
 import secrets
 import urllib.request
+import urllib.parse
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from datetime import datetime, timedelta
 
@@ -29,6 +30,7 @@ ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN", "")               # 管理后台 tok
 ALLOW_REGISTER = os.environ.get("ALLOW_REGISTER", "false").lower() == "true"  # 默认关闭公开注册
 ADMIN_USERNAME = os.environ.get("ADMIN_USERNAME", "")          # 启动时自动建管理员账号
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "")
+NEWRANK_KEY = os.environ.get("NEWRANK_KEY", "")   # 新榜 API 密钥（爆款模板库数据源；空则降级示例模板）
 
 # ---------- 数据库：Postgres / SQLite 双模式 ----------
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
@@ -99,6 +101,64 @@ FORMAT_TIP = (
     "分段透气，别一大坨；信息要实，别凑字数。"
 )
 
+# 爆款模板库：提炼结构 + 按模板出稿 专用提示词
+REFINE_PROMPT = (
+    "你是一个专门拆解爆款内容的操盘手。下面是一条真实爆款文章。"
+    "请把它拆成可复用的'结构骨架'——不要照搬它的具体事实，只提炼'为什么它爆'的套路。"
+    "严格按以下 5 点输出，每点一两句、点到为止：\n"
+    "1. 钩子类型：它开头用什么方式勾住人（反差/痛点/好奇/身份认同…）\n"
+    "2. 叙事结构：整体怎么铺（几段、每段干什么）\n"
+    "3. 情绪点：在哪几个位置制造了情绪波动\n"
+    "4. 金句位：记忆点/金句大概出现在哪\n"
+    "5. 结尾引导：怎么引导互动或关注\n"
+)
+GEN_PROMPT = (
+    "你是一个真实在更文更视频的博主，擅长'借爆款结构、写自己的真实内容'。"
+    "下面给了一条爆款的'结构骨架'，以及学员自己的定位和他的具体情况。"
+    "请先把骨架吃透，再把学员的真实情况填进去，写成一条他明天就能发的{format}。"
+    "硬要求：\n"
+    "- 结构节奏沿用爆款骨架（钩子→叙事→情绪点→金句→引导），但内容 100% 是学员自己的真实情况，严禁照搬原爆款的事实/人名/数据\n"
+    "- 说具体的事，别讲空道理，像他本人会发的那样，不是培训机构教的模板腔\n"
+    "- '真'字当头，可以带他的真实情绪和细节\n"
+)
+GEN_FORMAT_TIP = (
+    "\n\n【输出格式与语气要求】"
+    "语气：像一个有经验的真实博主在跟朋友说话——直接、口语、有真实感。可以用'其实''说实话''我发现''慢慢发现'。"
+    "少用'建议您''综上所述''值得注意的是'这类书面腔、顾问腔。切忌成功学、画大饼、'普通人逆袭''月入过万'话术。"
+    "排版：标题只用行首 ## 或 ### 表示层级，标题文字里不要再写 # 号；用 - 做要点；关键句 **加粗**。分段透气，别一大坨。"
+)
+
+# 爆款教练（v7 核心模块）：学员手动贴爆款原文 → AI 拆真实结构 → 按结构挖经历 → 出稿
+# 思路源自「IP爆款教练」MASTER_PROMPT，去新榜 API 依赖，站内闭环，无需外部数据源
+BAOKUAN_STEP1_PROMPT = """你是一位温暖又专业的「IP爆款内容教练」。学员已经把一条真实爆款文章的原文贴给你，并给了自己的定位。请帮他把这条爆款彻底拆开，并列出需要他本人提供的真实经历问题。全程简体中文，语气像耐心的教练，多鼓励，话别太多。
+
+请严格按下面 4 点输出，最后再给【经历问题清单】：
+
+1) 还原这条爆款的【实际结构图】：逐段（原文有小标题就照抄小标题，没有就按自然段给临时小标题）列出它的结构。每段标注：内容概括｜情绪功能（共鸣/焦虑/希望/信任/行动）｜这一段需要学员提供什么真实素材。结构必须完全来自这篇文章本身，禁止使用任何预设固定模板去套它。
+
+2) 标题公式归类（数字清单/身份共鸣/悬念反差/痛点直击/结果见证/对立冲突/疑问钩子/背书借力，可组合）+ 逐词成分分析（人群词/数字/痛点词/结果词/情绪词）。
+
+3) 开头钩子模式（场景还原/自我暴露/结论前置/提问代入/他人场景引入）+ 原文摘录。
+
+4) 情绪曲线一句话 + 结尾转化设计 + 可复用点 1-3 个。
+
+【经历问题清单】：根据上面的实际结构图，按文章段落先后顺序，列出 5-8 个问题，每个问题标注「（准备写：第X段）」。问题必须从这篇文章的框架里长出来——换一篇文章问题就不同；目的是让学员填进对应段落的真实素材（时间/地点/对话/数字/情绪）。不要问与框架无关的固定问题。
+
+输出顺序：先写「爆款结构拆解」（含 1-4），再写「经历问题清单」（编号列表，每条带段落标注）。"""
+
+BAOKUAN_STEP2_PROMPT = """你是一位温暖又专业的「IP爆款内容教练」。学员已经把一条爆款的【实际结构图】和【经历问题清单】发给你，并且逐一回答了问题（提供了自己的真实素材）。现在请生成学员自己的文章或口播稿。全程简体中文，语气像教练，多鼓励。
+
+做法：
+以爆款的【实际结构图】作为学员文章的框架——它有几段，学员文章就有几段，顺序和功能不变。逐段输出写作脚手架：每段以原结构的小标题作为段落名（学员自己写时可改成自己的措辞，但顺序和功能不变），给【框架作用：这段在原文里承担什么功能】+【填入：学员素材里的哪段经历、写到什么颗粒度（时间/地点/对话/数字/情绪）】。学员素材里没有的位置，标注「此处需要回想补充」，绝不替学员虚构；原文某段需要学员没有的经历时（如"有客户来咨询"），保留该段位置、给真实替代写法并说明原因。
+
+然后给：
+3 个候选标题（沿用该爆款标题公式、换成学员主题，说明各用了什么公式）；
+3-5 条写作提醒（保持这篇文章的段落顺序和情绪曲线、用细节不用概括、每一句都要只有学员能写出来）。
+
+最后告诉学员：按脚手架用自己的话写完，就是一篇和那篇爆款同骨架、但全是他自己血肉的文章。
+
+【铁律】学员说"没有"的经历绝不虚构；定位话术和金句保留学员自己的语气。"""
+
 MOCK = {
     "diagnose": {
         "mode": "mock",
@@ -146,6 +206,43 @@ MOCK = {
         "note": "前3个月只做信任和私域积累，别急着卖课。",
     },
 }
+
+# 爆款教练降级示例（未配置 AI 时返回，保证流程可演示）
+MOCK_BAOKUAN_STEP1 = """（演示·未配置真实 AI 时的示例）
+
+【爆款结构拆解】
+1) 实际结构图
+- 开头：作者晒自己踩的坑（内容概括：用亲身经历破题｜情绪功能：共鸣｜需学员素材：你自己的踩坑故事）
+- 中段：列 3-5 个同类坑，每个给替代方案（情绪功能：信任+希望）
+- 结尾：送一份清单，引导关注（情绪功能：行动）
+
+2) 标题公式：痛点直击 + 数字清单（"我花3000块踩的5个母婴智商税"）
+
+3) 开头钩子：自我暴露（"说实话，我当初也信了"）
+
+4) 情绪曲线：焦虑→信任→行动；结尾转化：送资料包；可复用点：清单体、对比体。
+
+【经历问题清单】
+1. （准备写：开头）你踩过最贵的一个坑是什么？花了多少钱？当时怎么发现的？
+2. （准备写：中段）你后来找到的替代方案是什么？具体怎么做的？
+3. （准备写：结尾）你愿意送粉丝什么资料？叫什么名字？"""
+
+MOCK_BAOKUAN_STEP2 = """（演示·未配置真实 AI 时的示例）
+
+【写作脚手架】
+- 开头（原：晒踩坑）：框架作用：用亲身经历破题、拉近距离。填入：你花XXX元买XXX踩坑的真实经过，写到"发现不对劲的那一刻"。
+- 中段（原：列坑+替代）：框架作用：建立专业信任。填入：你总结的3个坑和各自替代方案，用你自己的话。
+- 结尾（原：送清单）：框架作用：引导关注。填入：你整理的"XX避坑清单"，说明怎么领。
+
+【候选标题】
+1. 我花XXX块踩的5个母婴智商税（痛点直击+数字清单）
+2. 普通妈妈别再交这5种冤枉钱（身份共鸣+痛点直击）
+3. 这些母婴品，我替你先踩了雷（结果见证+身份共鸣）
+
+【写作提醒】
+1. 保持"踩坑→解决→送清单"的顺序和情绪曲线；
+2. 用细节不用概括（具体金额、品牌、场景）；
+3. 每句都只有你能写出来，别套模板腔。"""
 
 AI_HANDLERS = {
     "diagnose": lambda r: f"职业：{r.get('job','')}\n兴趣：{r.get('interest','')}\n每日可投入：{r.get('time','')}\n已有资源：{r.get('resource','')}",
@@ -329,6 +426,66 @@ def call_llm(system, user):
         return "[AI调用失败] " + str(e)
 
 
+# ---------- 新榜爆款数据源 ----------
+NEWRANK_TYPE_MAP = [
+    ("育儿|母婴|宝妈|娃|带娃|宝宝", "育儿"),
+    ("职场|上班|工作|副业|成长", "职场"),
+    ("情感|恋爱|婚姻|关系|老公|老婆", "情感"),
+    ("创业|赚钱|理财|财商|致富", "创业"),
+    ("美食|吃|菜谱|做饭|烘焙", "美食"),
+    ("旅游|旅行|出游|风景", "旅游"),
+    ("教育|学习|考试|孩子|学生|启蒙", "教育"),
+    ("健康|健身|养生|减肥", "健康"),
+    ("科技|数码|AI|人工智能|互联网|手机", "科技"),
+    ("财经|投资|股票|基金|房产", "财经"),
+    ("美妆|穿搭|时尚|护肤", "时尚"),
+    ("家居|装修|收纳|整理", "房产"),
+]
+def track_to_newrank_type(track):
+    t = track or ""
+    for kw, tp in NEWRANK_TYPE_MAP:
+        for k in kw.split("|"):
+            if k and k in t:
+                return tp
+    return "文化"
+
+def fetch_newrank_hot(track):
+    """拉该赛道对应的新榜类别当日热门文章。返回 list[{title,summary,url,read_num,content}]，失败/未配置返回 None"""
+    if not NEWRANK_KEY:
+        return None
+    ntype = track_to_newrank_type(track)
+    url = "https://api.newrank.cn/api/sync/weixin/data/hot/day_content"
+    body = urllib.parse.urlencode({
+        "type": ntype,
+        "date": datetime.now().strftime("%Y-%m-%d"),
+        "size": "10",
+    }).encode("utf-8")
+    req = urllib.request.Request(url, data=body, headers={
+        "Content-Type": "application/x-www-form-urlencoded;charset=utf-8",
+        "Key": NEWRANK_KEY,
+    })
+    try:
+        with urllib.request.urlopen(req, timeout=25) as resp:
+            j = json.loads(resp.read().decode("utf-8"))
+        items = (j.get("data") or []) if isinstance(j, dict) else []
+        out = []
+        for it in items[:10]:
+            if not isinstance(it, dict):
+                continue
+            content = it.get("content") or it.get("summary") or ""
+            out.append({
+                "title": it.get("title", "") or it.get("content_title", ""),
+                "summary": (content[:180] if content else ""),
+                "url": it.get("url", "") or it.get("article_url", ""),
+                "read_num": it.get("read_num") or it.get("read_count") or it.get("hot_value") or "",
+                "content": content,
+            })
+        return out
+    except Exception as e:
+        print("[NEWRANK_ERR]", e, flush=True)
+        return None
+
+
 def today_used(user):
     today = datetime.now().strftime("%Y-%m-%d")
     return 0 if user["quota_date"] != today else user["daily_count"]
@@ -398,6 +555,16 @@ class Handler(BaseHTTPRequestHandler):
         endpoint = path[len("/api/"):]
         if endpoint in AI_HANDLERS:
             return self._api_ai(endpoint, self._read_json())
+        if endpoint == "hot-templates":
+            return self._api_hot_templates(self._read_json())
+        if endpoint == "refine-template":
+            return self._api_refine(self._read_json())
+        if endpoint == "generate-from-template":
+            return self._api_gen_template(self._read_json())
+        if endpoint == "baokuan-step1":
+            return self._api_baokuan_step1(self._read_json())
+        if endpoint == "baokuan-step2":
+            return self._api_baokuan_step2(self._read_json())
         self._send_json({"error": "unknown endpoint"}, 404)
 
     def do_DELETE(self):
@@ -465,13 +632,14 @@ class Handler(BaseHTTPRequestHandler):
         """自检端点：浏览器直接打开 /api/health 就能看到配置是否生效（不泄露任何密钥）"""
         info = {
             "ok": True,
-            "版本": "v5.1",
+            "版本": "v7",
             "数据库模式": "Postgres（持久化·重部署不丢账号）" if USE_PG else "SQLite（临时·重部署会丢账号）",
             "持久化": USE_PG,
             "AI已配置": bool(API_KEY),
             "AI模型": MODEL if API_KEY else "未配置（走演示模式）",
             "管理员后台已启用": bool(ADMIN_TOKEN),
             "开放注册": ALLOW_REGISTER,
+            "爆款教练模式": "站内闭环·学员手动贴爆款（无需外部API）",
         }
         try:
             c = db_conn()
@@ -513,6 +681,126 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json({"mode": "live", "text": ai, **meta})
         else:
             self._send_json({**MOCK[endpoint], **meta})
+
+    # ---------- 爆款模板库（新榜数据源 + AI 提炼/出稿） ----------
+    def _require_quota(self):
+        """鉴权 + 扣配额，返回 (user, d) 或发送错误并返回 None"""
+        user = auth_user(self)
+        if not user:
+            self._send_json({"error": "请先登录", "needLogin": True}, 401)
+            return None
+        allow, d = check_and_inc_quota(user["id"])
+        if not allow:
+            self._send_json({
+                "error": "今日调用额度已用尽，明天重置",
+                "used": d["daily_count"], "quota": d["daily_quota"], "quotaExceeded": True,
+            }, 429)
+            return None
+        return user, d
+
+    def _api_hot_templates(self, req):
+        user = auth_user(self)
+        if not user:
+            return self._send_json({"error": "请先登录", "needLogin": True}, 401)
+        track = (req.get("track") or "").strip()
+        items = fetch_newrank_hot(track)
+        if items is None:
+            # 降级：示例模板（演示用，提示未配置真实数据源）
+            items = [
+                {"title": "我花3000块踩的5个母婴智商税", "summary": "（示例）开头晒真实踩坑，列3-5个坑，给替代方案，结尾送清单", "url": "", "read_num": "", "content": "示例爆款正文：开头晒一个真实踩坑，列3-5个同类坑并给替代方案，结尾送清单。"},
+                {"title": "普通妈妈的一周餐谱花销实录", "summary": "（示例）连续7天记录餐谱花销，展示数据，复盘可复用方法", "url": "", "read_num": "", "content": "示例爆款正文：连续7天记录某件事，展示数据/变化，复盘可复用方法。"},
+                {"title": "两款婴儿车我替你扛了30天", "summary": "（示例）A vs B 实测，给结论，说明适用人群", "url": "", "read_num": "", "content": "示例爆款正文：A vs B 实测，给出结论，说明适用人群。"},
+            ]
+            return self._send_json({"templates": items, "source": "mock", "needKey": True,
+                                    "message": "当前为示例模板；在环境变量配置 NEWRANK_KEY 后拉取真实爆款。"})
+        return self._send_json({"templates": items, "source": "newrank", "type": track_to_newrank_type(track)})
+
+    def _api_refine(self, req):
+        r = self._require_quota()
+        if not r:
+            return
+        user, d = r
+        content = (req.get("content") or "").strip()
+        if not content:
+            return self._send_json({"error": "缺少爆款内容"}, 400)
+        structure = call_llm(REFINE_PROMPT, "爆款内容：\n" + content[:4000])
+        meta = {"used": d["daily_count"], "quota": d["daily_quota"]}
+        if structure and not structure.startswith("[AI调用失败]"):
+            self._send_json({"mode": "live", "structure": structure, **meta})
+        else:
+            self._send_json({"mode": "mock", "structure": "（演示）钩子：晒真实踩坑；结构：列坑→替代方案→送清单；情绪点：共鸣'我也踩过'；金句位：结尾；引导：送资料。", **meta})
+
+    def _api_gen_template(self, req):
+        r = self._require_quota()
+        if not r:
+            return
+        user, d = r
+        structure = (req.get("structure") or "").strip()
+        position = (req.get("position") or "").strip()
+        detail = (req.get("detail") or "").strip()
+        fmt = (req.get("format") or "文章").strip()
+        if not structure or not detail:
+            return self._send_json({"error": "请先提炼模板结构并填写你的具体情况"}, 400)
+        user_msg = (
+            f"爆款结构骨架：\n{structure}\n\n"
+            f"学员定位：{position}\n\n"
+            f"学员的具体情况（要填进模板的真实素材）：\n{detail}"
+        )
+        text = call_llm(GEN_PROMPT.format(format=fmt) + GEN_FORMAT_TIP, user_msg)
+        meta = {"used": d["daily_count"], "quota": d["daily_quota"]}
+        if text and not text.startswith("[AI调用失败]"):
+            self._send_json({"mode": "live", "text": text, **meta})
+        else:
+            self._send_json({"mode": "mock", "text": "（演示）基于模板结构 + 你的定位写出的成稿占位。配置真实 AI 后生成可用内容。", **meta})
+
+    # ---------- 爆款教练（v7：学员手动贴爆款原文，站内闭环，无需外部 API） ----------
+    def _api_baokuan_step1(self, req):
+        r = self._require_quota()
+        if not r:
+            return
+        user, d = r
+        position = (req.get("position") or "").strip()
+        hot = (req.get("hot_content") or "").strip()
+        fmt = (req.get("format") or "文章").strip()
+        if not hot:
+            return self._send_json({"error": "请先粘贴一条你搜到的爆款原文"}, 400)
+        user_msg = (
+            f"学员定位：{position or '（未填，按爆款本身推断）'}\n"
+            f"产出形式：{fmt}\n\n"
+            f"==== 学员粘贴的爆款原文 ====\n{hot[:5000]}"
+        )
+        text = call_llm(BAOKUAN_STEP1_PROMPT, user_msg)
+        meta = {"used": d["daily_count"], "quota": d["daily_quota"]}
+        if text and not text.startswith("[AI调用失败]"):
+            self._send_json({"mode": "live", "text": text, **meta})
+        else:
+            self._send_json({"mode": "mock", "text": MOCK_BAOKUAN_STEP1, **meta})
+
+    def _api_baokuan_step2(self, req):
+        r = self._require_quota()
+        if not r:
+            return
+        user, d = r
+        position = (req.get("position") or "").strip()
+        hot = (req.get("hot_content") or "").strip()
+        fmt = (req.get("format") or "文章").strip()
+        structure = (req.get("structure") or "").strip()
+        answers = (req.get("answers") or "").strip()
+        if not answers:
+            return self._send_json({"error": "请先按问题清单填写你的真实经历"}, 400)
+        user_msg = (
+            f"学员定位：{position or '（未填）'}\n"
+            f"产出形式：{fmt}\n\n"
+            f"==== 爆款原文 ====\n{hot[:3000]}\n\n"
+            f"==== 上一步生成的爆款结构拆解 ====\n{structure}\n\n"
+            f"==== 学员按问题清单填写的真实素材 ====\n{answers}"
+        )
+        text = call_llm(BAOKUAN_STEP2_PROMPT, user_msg)
+        meta = {"used": d["daily_count"], "quota": d["daily_quota"]}
+        if text and not text.startswith("[AI调用失败]"):
+            self._send_json({"mode": "live", "text": text, **meta})
+        else:
+            self._send_json({"mode": "mock", "text": MOCK_BAOKUAN_STEP2, **meta})
 
     # ---------- 方案存档 ----------
     def _api_list_schemes(self):
