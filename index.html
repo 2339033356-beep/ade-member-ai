@@ -48,6 +48,19 @@
     border-radius:6px;padding:2px 8px;font-size:12px;margin:2px 4px 2px 0}
   .track{margin:10px 0;padding:12px;border:1px solid var(--line);border-radius:10px}
   .track b{font-size:15px}
+
+  /* 内容方向库专用卡片（v8 优化） */
+  .plan-actions{display:flex;gap:8px;flex-wrap:wrap;margin:4px 0 12px}
+  .plan-actions button{margin:0;font-size:12px;padding:6px 12px}
+  .plan-card{margin:10px 0;padding:14px 16px;border:1px solid var(--line);border-radius:10px;background:#fff}
+  .plan-head{display:flex;align-items:flex-start;gap:10px;margin-bottom:6px}
+  .plan-num{flex:0 0 24px;height:24px;border-radius:50%;background:var(--brand);color:#fff;
+    display:inline-flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;line-height:1}
+  .plan-title{flex:1;font-size:15px;font-weight:600;line-height:1.5;color:var(--ink);
+    overflow-wrap:break-word;word-break:normal}
+  .plan-tags{margin:6px 0 2px 34px;line-height:2}
+  .plan-tags .tag{font-size:12px;margin:2px 4px 2px 0;word-break:keep-all}
+  .plan-angle{margin:6px 0 0 34px;font-size:13px;color:var(--sub);font-style:italic;line-height:1.6}
   .mini{font-size:12px;color:var(--sub)}
   footer{margin-top:30px;color:var(--sub);font-size:12px;text-align:center}
   code{background:#eef1f5;padding:1px 5px;border-radius:4px;font-size:12px}
@@ -486,6 +499,7 @@ async function bkStep2(){
   finally{ btn.disabled=false; btn.textContent=old; }
 }
 /* ---------- 第 3 步：内容方向库（定位 → 30 条方向 + 微信标签） ---------- */
+let _currentPlans = []; // 用于「一键复制全部标签」
 async function contentPlan(){
   let pos = $("cp_pos").value.trim();
   if(!pos){ alert("先填写你的定位/人设（或先完成第 2 步定位）"); return; }
@@ -494,14 +508,18 @@ async function contentPlan(){
     const d = await callAPI("content-plan", {position: pos});
     const box = $("r3");
     if(d.plans && d.plans.length){
+      _currentPlans = d.plans;
       const title = d.mode === "live" ? "内容方向库（真实 AI）" : "内容方向库（演示）";
       let html = `<div class="result-title">${title} · 共 ${d.plans.length} 条</div>`
-        + `<p class="mini">拿每条的「微信搜索标签」去微信搜一搜，找同主题爆款 → 到下一步（第 4 步）贴进来拆框架。</p>`;
+        + `<p class="mini">拿每条的「微信搜索标签」去微信搜一搜，找同主题爆款 → 到下一步（第 4 步）贴进来拆框架。</p>`
+        + `<div class="plan-actions"><button class="ghost" onclick="copyAllTags()">📋 一键复制全部标签</button></div>`;
       d.plans.forEach((p, i) => {
-        const tags = (p.tags || []).map(t => `<span class="tag" style="cursor:pointer" onclick="copyTag('${esc(t)}')" title="点击复制去微信搜">${esc(t)}</span>`).join("");
-        html += `<div class="track"><div style="display:flex;justify-content:space-between;gap:8px"><b>${i+1}. ${esc(p.title)}</b></div>`
-          + `<div>${tags}</div>`
-          + (p.angle ? `<div class="mini">${esc(p.angle)}</div>` : "");
+        const tags = (p.tags || []).map(t => `<span class="tag" style="cursor:pointer" onclick="copyTag('${esc(t)}')" title="点击复制去微信搜">${esc(t)}</span>`).join(" ");
+        html += `<div class="plan-card">`
+          + `<div class="plan-head"><span class="plan-num">${i+1}</span><div class="plan-title">${esc(p.title)}</div></div>`
+          + `<div class="plan-tags">${tags}</div>`
+          + (p.angle ? `<div class="plan-angle">💡 ${esc(p.angle)}</div>` : "")
+          + `</div>`;
       });
       show(box, html);
       withSave(box, "内容方向库", pos, JSON.stringify(d.plans, null, 2));
@@ -518,6 +536,19 @@ async function contentPlan(){
 function copyTag(t){
   if(navigator.clipboard) navigator.clipboard.writeText(t).catch(()=>{});
   alert("已复制标签：「" + t + "」\n去微信 → 发现 → 搜一搜，粘贴即可找同主题爆款");
+}
+async function copyAllTags(){
+  const all = [];
+  _currentPlans.forEach(p => (p.tags||[]).forEach(t => all.push(t)));
+  const unique = [...new Set(all)];
+  if(!unique.length){ alert("暂无可复制的标签"); return; }
+  const text = unique.join("\n");
+  try{
+    if(navigator.clipboard) await navigator.clipboard.writeText(text);
+    alert("已复制 " + unique.length + " 个去重标签（每行一个）\n去微信 → 发现 → 搜一搜，逐行粘贴找爆款");
+  }catch(e){
+    prompt("浏览器拦截了复制，请手动复制以下标签（每行一个）：", text);
+  }
 }
 
 /* ---------- 第 5 步：成稿润色器（框架 + 草稿 → 修正错别字病句） ---------- */
