@@ -190,10 +190,25 @@ POLISH_PROMPT = """你是一个帮学员润色稿子的编辑。学员已经拿�
 直接输出润色后的完整成稿（可用 Markdown，标题用 ## 表示层级），不要输出任何解释、不要输出「修改说明」「以下是润色稿」之类前缀。"""
 
 # ---------- 定位罗盘润色 ----------
-LUOPAN_POLISH_PROMPT = """你是自媒体定位教练的文字助手。请把学员的原始定位素材打磨成简洁、到位、能直接印在卡片上的中文定位。
-要求：1.修正错别字和病句；2.保留四要素：我是谁、帮哪几类人、解决什么问题、用什么方法（产品形式）；
-3.不得编造学员没有说的信息，不得夸大；4.每个要素精炼成短语，who/audience/problem 各不超过 30 字，method 保留产品形式原词；
-5.只输出 JSON：{"who":"...","audience":"...","problem":"...","method":"..."}，不要输出任何其他文字。"""
+LUOPAN_POLISH_PROMPT = """你是一位顶尖的个人品牌文案写手，擅长把零散的原始素材打磨成一段有节奏、有张力、让人记住的「品牌定位话术」。
+
+学员给了你他的四要素原始素材（可能口语化、啰嗦、编号混乱），请你把它重写成一段**流畅、专业、有力量感**的中文品牌介绍。
+
+【风格参考——你要写出这种质感】
+我是阿德，00 后三本出身，大二入局自媒体，不靠资源、不靠背景，纯实操把自媒体变现做到 100 万。
+此前任职头部千万级自媒体公司，深耕 IP 发售体系，多场联合操盘活动累计总 GMV 突破 500 万。
+2026 年 3 月正式离职全职做自由 IP，专注自媒体私域变现赛道，打通 AI 工具、内容创作、公域流量、私域成交、IP 产品全链路闭环，线下线上累计赋能 10000 + 学员拿到变现结果。
+
+【写作原则】
+1. 用第三人称或第一人称都可以，选更有力量的那个；
+2. 把数字和结果前置或嵌入关键位置（"100万""500万GMV""10000+学员"）；
+3. 去掉口语废话（"我觉得""其实""然后"），每句话都要有信息量；
+4. 分 3-4 段，每段一个主题（出身/经历 → 能力证明 → 现在做的事 → 赋能成果）；
+5. 结尾要有「全链路」「闭环」「赋能」这类有体量的词收住；
+6. **绝对不能编造**学员没说的事实和数字，但可以重新组织语序让同样的事实听起来更厉害；
+7. 控制总字数在 150-250 字之间。
+
+【输出格式】只输出纯文本，不要 JSON、不要 markdown 标记、不要任何前缀说明。直接输出那段话本身。"""
 
 LUOPAN_SITE_PASSWORD = os.environ.get("LUOPAN_SITE_PASSWORD", "ade2026")  # 定位罗盘站密码，用于轻量鉴权
 
@@ -971,27 +986,25 @@ class Handler(BaseHTTPRequestHandler):
         pwd = self.headers.get("X-Site-Password", "")
         if pwd != LUOPAN_SITE_PASSWORD:
             return self._send_json({"error": "站点密码错误"}, 403)
-        # 取四要素
+        # 取原始素材
         who = (req.get("who") or "").strip()
-        audience = (req.get("audience") or req.get("problem", "")).strip()  # 兼容前端字段名
+        audience = (req.get("audience") or req.get("problem", "")).strip()
         problem = (req.get("problem") or req.get("val", "")).strip()
         method = (req.get("method") or "").strip()
         if not who and not audience and not problem:
             return self._send_json({"error": "请提供定位素材"}, 400)
-        user_msg = f"原始素材：who={who}；audience={audience}；problem={problem}；method={method}"
+        user_msg = f"""【学员原始素材】
+我是谁：{who}
+帮哪几类人：{audience}
+解决什么问题：{problem}
+用什么方法（产品形式）：{method}
+
+请根据以上素材，输出一段有节奏、有张力的品牌定位话术。"""
         text = call_llm(LUOPAN_POLISH_PROMPT, user_msg)
         if not text or text.startswith("[AI调用失败]"):
             return self._send_json({"error": "AI 润色失败，请稍后重试或使用原始版"}, 503)
-        # 尝试从返回中提取 JSON
-        import re as _re
-        m = _re.search(r"\{[\s\S]*\}", text)
-        if m:
-            try:
-                o = json.loads(m.group(0))
-                return self._send_json(o)
-            except Exception:
-                pass
-        return self._send_json({"raw": text})
+        # 返回纯文本
+        return self._send_json({"text": text.strip()})
 
     # ---------- 方案存档 ----------
     def _api_list_schemes(self):
