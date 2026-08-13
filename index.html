@@ -89,6 +89,7 @@
       <h1>自媒体起步 AI 系统</h1>
       <p>学员登录后跟着 AI 跑出：赛道 → 定位 → 内容 → 模板 → 商业化。</p>
       <span class="badge">后端托管 · 统一付费 · 按额度调用</span>
+      <span id="verTag" class="badge" title="当前前端版本（点我刷新确认）" onclick="updateVer()" style="cursor:pointer;background:#e8f5e9;color:#1b5e20;border-color:#a5d6a7">检测中…</span>
     </div>
     <div class="topbtns">
       <span id="authArea"></span>
@@ -673,7 +674,23 @@ const MOCK = {
   ],note:"前3个月只做信任和私域积累，别急着卖课。"}
 };
 
-updateAuthUI(null); refreshMe(); loadPlans();
+/* ---------- 版本角标（从 /api/health 拉真实版本，硬刷新后一眼确认） ---------- */
+async function updateVer(){
+  const el = $("verTag");
+  if(!el) return;
+  el.textContent = "版本检测中…";
+  try{
+    const r = await fetch(apiBase()+"/api/health");
+    const d = await r.json().catch(()=>({}));
+    if(d.版本) el.textContent = "前端 "+FRONT_VER+" · 后端 "+d.版本;
+    else el.textContent = "前端 "+FRONT_VER;
+  }catch(e){
+    el.textContent = "前端 "+FRONT_VER;
+  }
+}
+const FRONT_VER = "v8.2";
+
+updateAuthUI(null); refreshMe(); loadPlans(); updateVer();
 </script>
 </body>
 </html>
