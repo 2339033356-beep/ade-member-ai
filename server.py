@@ -189,6 +189,15 @@ POLISH_PROMPT = """你是一个帮学员润色稿子的编辑。学员已经拿�
 
 直接输出润色后的完整成稿（可用 Markdown，标题用 ## 表示层级），不要输出任何解释、不要输出「修改说明」「以下是润色稿」之类前缀。"""
 
+# ---------- 定位罗盘润色 ----------
+LUOPAN_POLISH_PROMPT = """你是自媒体定位教练的文字助手。请把学员的原始定位素材打磨成简洁、到位、能直接印在卡片上的中文定位。
+要求：1.修正错别字和病句；2.保留四要素：我是谁、帮哪几类人、解决什么问题、用什么方法（产品形式）；
+3.不得编造学员没有说的信息，不得夸大；4.每个要素精炼成短语，who/audience/problem 各不超过 30 字，method 保留产品形式原词；
+5.只输出 JSON：{"who":"...","audience":"...","problem":"...","method":"..."}，不要输出任何其他文字。"""
+
+LUOPAN_SITE_PASSWORD = os.environ.get("LUOPAN_SITE_PASSWORD", "ade2026")  # 定位罗盘站密码，用于轻量鉴权
+
+
 def parse_plan_json(text):
     """从 AI 返回里尽量抽出 JSON 数组（兼容前后有废话的情况）。失败返回 None。"""
     import re
@@ -670,6 +679,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._api_content_plan(self._read_json())
         if endpoint == "polish":
             return self._api_polish(self._read_json())
+        if endpoint == "luopan-polish":
+            return self._api_luopan_polish(self._read_json())
         self._send_json({"error": "unknown endpoint"}, 404)
 
     def do_DELETE(self):
@@ -952,6 +963,35 @@ class Handler(BaseHTTPRequestHandler):
         if text and not text.startswith("[AI调用失败]"):
             return self._send_json({"mode": "live", "text": text, **meta})
         return self._send_json({"mode": "mock", "text": MOCK["polish"]["text"], **meta})
+
+    # ---------- 定位罗盘润色（外部站代理，不需登录鉴权） ----------
+    def _api_luopan_polish(self, req):
+        """定位罗盘站的 AI 润色接口。通过 X-Site-Password 头做轻量密码校验，不消耗学员配额。"""
+        # 密码校验
+        pwd = self.headers.get("X-Site-Password", "")
+        if pwd != LUOPAN_SITE_PASSWORD:
+            return self._send_json({"error": "站点密码错误"}, 403)
+        # 取四要素
+        who = (req.get("who") or "").strip()
+        audience = (req.get("audience") or req.get("problem", "")).strip()  # 兼容前端字段名
+        problem = (req.get("problem") or req.get("val", "")).strip()
+        method = (req.get("method") or "").strip()
+        if not who and not audience and not problem:
+            return self._send_json({"error": "请提供定位素材"}, 400)
+        user_msg = f"原始素材：who={who}；audience={audience}；problem={problem}；method={method}"
+        text = call_llm(LUOPAN_POLISH_PROMPT, user_msg)
+        if not text or text.startswith("[AI调用失败]"):
+            return self._send_json({"error": "AI 润色失败，请稍后重试或使用原始版"}, 503)
+        # 尝试从返回中提取 JSON
+        import re as _re
+        m = _re.search(r"\{[\s\S]*\}", text)
+        if m:
+            try:
+                o = json.loads(m.group(0))
+                return self._send_json(o)
+            except Exception:
+                pass
+        return self._send_json({"raw": text})
 
     # ---------- 方案存档 ----------
     def _api_list_schemes(self):
